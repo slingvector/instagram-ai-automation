@@ -1,0 +1,128 @@
+{
+    "name": "MCR — Instagram Reel Orchestrator",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "mcr-ingest",
+                "responseMode": "responseNode",
+                "options": {}
+            },
+            "id": "node-webhook-trigger",
+            "name": "Webhook Trigger",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [
+                240,
+                300
+            ],
+            "webhookId": "mcr-ingest"
+        },
+        {
+            "parameters": {
+                "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst gcsUri = body.gcs_video_uri;\nif (!gcsUri) {\n  throw new Error('Missing gcs_video_uri in payload');\n}\nreturn [{ json: { gcs_video_uri: gcsUri } }];"
+            },
+            "id": "node-extract-uri",
+            "name": "Extract GCS URI",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                460,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://us-central1-mcr-relay-1772228380.cloudfunctions.net/mcr-video-ingest",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "gcs_video_uri",
+                            "value": "={{ $json.gcs_video_uri }}"
+                        }
+                    ]
+                },
+                "options": {
+                    "timeout": 30000
+                }
+            },
+            "id": "node-cloud-function",
+            "name": "Trigger Cloud Function",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                680,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ JSON.stringify({ status: 'queued', job_id: $json.job_id, message: $json.message }) }}",
+                "options": {}
+            },
+            "id": "node-respond",
+            "name": "Respond to Scraper",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1,
+            "position": [
+                900,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "Webhook Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Extract GCS URI",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extract GCS URI": {
+            "main": [
+                [
+                    {
+                        "node": "Trigger Cloud Function",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Trigger Cloud Function": {
+            "main": [
+                [
+                    {
+                        "node": "Respond to Scraper",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "tags": [
+        "MCR",
+        "instagram",
+        "production"
+    ]
+}
