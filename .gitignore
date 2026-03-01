@@ -33,9 +33,9 @@ htmlcov/
 coverage.xml
 
 # ── Runtime data ───────────────────────────────────────────────────────────────
-recordings/          # Flow recorder sessions — too large, use separately
-debug/               # Per-run ADB debug screenshots and XML dumps
-data/                # Scraped/processed media assets
+recordings/
+debug/
+data/
 
 # ── Temp & editor ──────────────────────────────────────────────────────────────
 *.mp4

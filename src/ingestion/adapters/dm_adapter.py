@@ -62,7 +62,7 @@ class DMAdapter(SourceAdapter):
         Returns ContentItems for new, unseen messages only.
         """
         try:
-            from playwright.sync_api import sync_playwright
+            from playwright.sync_api import sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
         except ImportError:
             logger.error("playwright not installed. Run: pip install playwright && playwright install chromium")
             return []
@@ -74,14 +74,49 @@ class DMAdapter(SourceAdapter):
             context = self._make_context(browser, p)
             page = context.new_page()
 
+            # Attach browser debug listeners
+            page.on("console", lambda msg: logger.debug(f"BROWSER CONSOLE [{msg.type}]: {msg.text}"))
+            page.on("requestfailed", lambda req: logger.debug(f"BROWSER HTTP FAIL: {req.url} — {req.failure}"))
+            
+            self._api_shortcodes = set()
+            
+            def handle_response(response):
+                try:
+                    if "api/v1/direct_v2" in response.url or "graphql" in response.url:
+                        if response.request.resource_type in ["fetch", "xhr"]:
+                            text = response.text()
+                            # Shortcodes are exactly 11 characters typically, but we allow 11-15 
+                            matches = re.findall(r'"(?:code|shortcode|clip_url|video_url)":"([^"]+)"', text)
+                            for m in matches:
+                                if re.match(r'^[A-Za-z0-9_-]{11,15}$', m):
+                                    self._api_shortcodes.add(m)
+                                elif "/reel/" in m or "/p/" in m or "/reels/" in m:
+                                    url_m = re.search(r'/(?:reel|p|reels)/([A-Za-z0-9_-]+)', m)
+                                    if url_m:
+                                        self._api_shortcodes.add(url_m.group(1))
+                            
+                            # Fallback for hidden URLs in the JSON payload
+                            fallback_urls = re.findall(r'/(?:reel|p|reels)/([A-Za-z0-9_-]+)[/"\'\\]', text)
+                            for u in fallback_urls:
+                                self._api_shortcodes.add(u)
+                except Exception:
+                    pass
+
+            page.on("response", handle_response)
+
             try:
                 self._login(page)
                 items = self._scrape_dms(page)
+            except KeyboardInterrupt:
+                logger.info("Scraping manually stopped by user.")
             except Exception as e:
                 logger.error(f"DM scraping failed: {e}")
             finally:
                 # Save updated session cookies
-                context.storage_state(path=str(self.session_file))
+                try:
+                    context.storage_state(path=str(self.session_file))
+                except Exception as e:
+                    logger.debug(f"Could not save storage state (maybe browser closed): {e}")
                 browser.close()
 
         return items
@@ -92,12 +127,12 @@ class DMAdapter(SourceAdapter):
         """Create a stealth browser context, loading saved session if available."""
         context_kwargs = {
             "user_agent": (
-                "Mozilla/5.0 (Linux; Android 11; Pixel 5) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Mobile Safari/537.36"
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             ),
-            "viewport": {"width": 390, "height": 844},
+            "viewport": {"width": 1280, "height": 800},
             "locale": "en-US",
+            "device_scale_factor": 2,
         }
         if self.session_file.exists():
             context_kwargs["storage_state"] = str(self.session_file)
@@ -106,33 +141,39 @@ class DMAdapter(SourceAdapter):
 
     def _login(self, page) -> None:
         """Login to Instagram if not already authenticated via saved session."""
-        page.goto("https://www.instagram.com/", wait_until="networkidle", timeout=30_000)
-        self._human_delay(2, 4)
+        logger.info("Checking login state...")
+        page.goto("https://www.instagram.com/")
+        self._human_delay(3, 5)
 
-        # Check if already logged in
-        if page.url.startswith("https://www.instagram.com/") and \
-           page.query_selector('[aria-label="Instagram"]') is not None:
-            try:
-                # Look for login form; if absent, we're already in
-                page.wait_for_selector('input[name="username"]', timeout=3_000)
-            except Exception:
-                logger.info("Already logged in via saved session.")
-                return
+        # Check if already logged in (look for home icon)
+        try:
+            page.wait_for_selector('svg[aria-label="Home"], a[href="/"]', timeout=5000)
+            logger.info("Already logged in via saved session.")
+            return
+        except Exception:
+            pass
 
         logger.info("Logging in to read-only IG account...")
-        page.goto("https://www.instagram.com/accounts/login/", wait_until="networkidle", timeout=30_000)
-        self._human_delay(1, 3)
+        page.goto("https://www.instagram.com/accounts/login/")
+        self._human_delay(3, 5)
 
-        page.fill('input[name="username"]', self.username)
-        self._human_delay(0.5, 1.5)
-        page.fill('input[name="password"]', self.password)
-        self._human_delay(0.5, 1.5)
-        page.click('button[type="submit"]')
+        try:
+            page.fill('input[name="username"]', self.username)
+            self._human_delay(1, 2)
+            page.fill('input[name="password"]', self.password)
+            self._human_delay(1, 2)
+            page.click('button[type="submit"]')
+        except Exception as e:
+            logger.warning(f"Could not auto-fill login: {e}")
 
-        # Wait for redirect away from login page
-        page.wait_for_url("https://www.instagram.com/**", timeout=15_000)
-        self._human_delay(2, 4)
-        logger.info("Login successful.")
+        logger.info("Waiting for successful login (up to 60s for captcha/2FA)...")
+        try:
+            page.wait_for_selector('svg[aria-label="Home"], a[href="/"]', timeout=60_000)
+            self._human_delay(2, 4)
+            logger.info("Login successful.")
+        except PlaywrightTimeoutError:
+            logger.error("Login timed out. Handle CAPTCHA or 2FA manually faster.")
+            raise
 
     # ── DM scraping ───────────────────────────────────────────────────────────
 
@@ -140,48 +181,112 @@ class DMAdapter(SourceAdapter):
         """Navigate to DM inbox and extract Reel URLs from message threads."""
         items: List[ContentItem] = []
 
-        logger.info("Navigating to DM inbox...")
-        page.goto("https://www.instagram.com/direct/inbox/", wait_until="networkidle", timeout=30_000)
+        logger.info("Loading Home feed to simulate human flow...")
+        page.goto("https://www.instagram.com/")
+        self._human_delay(3, 5)
+
+        logger.info("Simulating human scroll on Home feed...")
+        page.mouse.wheel(0, 800)
+        self._human_delay(1, 2)
+        page.mouse.wheel(0, -400)
         self._human_delay(2, 3)
 
-        # Find DM thread list items
-        threads = page.query_selector_all('[role="listitem"]')
+        logger.info("Clicking Messages icon in sidebar...")
+        try:
+            page.click('a[href^="/direct/inbox/"]', timeout=5000)
+            self._human_delay(3, 5)
+        except Exception as e:
+            logger.warning(f"Failed to click Messages link: {e}. Falling back to URL.")
+            page.goto("https://www.instagram.com/direct/inbox/")
+            self._human_delay(3, 5)
+
+        # Wait for the Thread list container (Desktop UI)
+        try:
+            logger.info("Waiting for DM threads to render (up to 15s)...")
+            page.wait_for_selector('[aria-label="Thread list"]', timeout=15_000)
+        except PlaywrightTimeoutError:
+            logger.debug("No DM Thread list found within timeout.")
+
+        threads = []
+        thread_container = page.query_selector('[aria-label="Thread list"]')
+        if thread_container:
+            # Get all role="button" inside. The first few are usually headers/notes.
+            buttons = thread_container.query_selector_all('div[role="button"]')
+            for b in buttons:
+                text = b.inner_text().strip()
+                # Skip the user's own header and compose/note buttons
+                if not text or text == "New message" or "your note" in text.lower():
+                    continue
+                # Skip the header with the username
+                if text.startswith(self.username):
+                    continue
+                # Skip tablist buttons if any slipped through
+                if text in ["Primary", "General", "Requests"]:
+                    continue
+                threads.append(b)
+
         logger.info(f"Found {len(threads)} DM threads. Checking up to {self.max_threads}.")
 
         for thread in threads[:self.max_threads]:
             try:
+                # Safely get the thread name for logging
+                t_name = thread.inner_text().split('\n')[0]
+                logger.info(f"Opening thread: {t_name}")
                 thread_items = self._process_thread(page, thread)
                 items.extend(thread_items)
             except Exception as e:
-                logger.debug(f"Thread processing error: {e}")
-            self._human_delay(1, 2)
+                logger.error(f"Thread processing error: {e}", exc_info=True)
+            self._human_delay(2, 4)
 
         return items
 
     def _process_thread(self, page, thread) -> List[ContentItem]:
         """Click a thread and extract new Reel URLs from its messages."""
         items: List[ContentItem] = []
-
         thread.click()
-        self._human_delay(1.5, 3)
+        self._human_delay(3, 5)
 
-        # Grab all message links in the visible thread
-        links = page.query_selector_all('a[href*="instagram.com/reel"], a[href*="instagram.com/p/"]')
+        try:
+            page.wait_for_selector('a[href]', timeout=10_000)
+        except PlaywrightTimeoutError:
+            pass
+            
+        thread_id = page.url.strip('/').split('/')[-1]
+        try:
+            html = page.content()
+            dump_path = Path(f"debug/thread_{thread_id}.html")
+            dump_path.write_text(html, encoding="utf-8")
+        except Exception as e:
+            logger.debug(f"Failed to dump thread HTML: {e}")
 
-        for link in links:
-            href = link.get_attribute("href") or ""
-            m = _REEL_URL_RE.search(href)
-            if not m:
+        # Give the API responses time to fully arrive
+        self._human_delay(2, 4)
+
+        # 1. Gather all shortcodes intercepted from backend JSON during this thread click
+        shortcodes = list(self._api_shortcodes)
+        self._api_shortcodes.clear()
+        
+        # 2. Add any shortcodes found natively in the URL (unlikely but safe)
+        if "/reel/" in page.url or "/p/" in page.url:
+            shortcode = page.url.strip('/').split('/')[-1]
+            shortcodes.append(shortcode)
+            
+        logger.info(f"[DEBUG] Extracting intercept shortcodes: {shortcodes}")
+
+        seen_in_this_thread = set()
+        for shortcode in shortcodes:
+            if shortcode.lower() == "audio" or len(shortcode) < 8 or shortcode in seen_in_this_thread:
                 continue
+                
+            seen_in_this_thread.add(shortcode)
 
-            shortcode = m.group(1)
             # Derive a stable message_id from thread URL + shortcode
             thread_url = page.url
             message_id = f"{thread_url.split('/')[-1]}::{shortcode}"
 
             # Skip if we've already processed this DM
             if self.dedup.is_dm_seen(message_id):
-                logger.debug(f"DM already seen: {message_id}")
+                logger.info(f"DM already seen: {message_id}")
                 continue
 
             url = f"https://www.instagram.com/reel/{shortcode}/"

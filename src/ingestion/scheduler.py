@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 _DOWNLOAD_DIR = Path("data/downloads")
-_PROCESSED_BUCKET = os.environ.get("GCS_BUCKET_PROCESSED", "")
+_PROCESSED_BUCKET = os.environ.get("GCS_PROCESSED_BUCKET", "")
 
 
 def _process_items(items: List[ContentItem], label: str):
