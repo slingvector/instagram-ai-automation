@@ -1,0 +1,56 @@
+# Cross-Platform Watchlist
+# yt-dlp handles all platforms natively.
+# Add account/channel URLs and per-platform filters.
+
+platforms:
+
+  youtube:
+    enabled: true
+    filters:
+      min_views: 500000
+      min_likes: 10000
+      max_duration_seconds: 90
+    accounts:
+      - url: ""     # e.g. https://www.youtube.com/@MrBeast/shorts
+        niche: entertainment
+      - url: ""
+        niche: sport
+
+  tiktok:
+    enabled: true
+    filters:
+      min_views: 300000
+      min_likes: 5000
+      max_duration_seconds: 60
+    accounts:
+      - url: ""     # e.g. https://www.tiktok.com/@khaby.lame
+        niche: fun
+      - url: ""
+        niche: fashion
+
+  facebook:
+    enabled: false
+    filters:
+      min_views: 200000
+      min_likes: 2000
+      max_duration_seconds: 90
+    accounts:
+      - url: ""
+        niche: entertainment
+
+  snapchat:
+    enabled: false
+    filters:
+      min_views: 100000
+      max_duration_seconds: 60
+    accounts:
+      - url: ""
+        niche: fun
+
+  telegram:
+    enabled: false
+    filters:
+      max_duration_seconds: 90
+    accounts:
+      - url: ""     # e.g. https://t.me/s/breaking_news
+        niche: entertainment

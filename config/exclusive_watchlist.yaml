@@ -1,0 +1,16 @@
+# Exclusive Account Watchlist
+# ISOLATED — posts to exclusive-account only. Never merged with main watchlist.
+# Niche: explicit content
+
+niche: explicit
+target_account: exclusive
+
+filters:
+  min_views: 200000
+  min_likes: 5000
+  posted_within_days: 7
+  max_duration_seconds: 120
+
+accounts:
+  - username: ""   # Add IG usernames here
+  - username: ""

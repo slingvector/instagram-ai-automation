@@ -1,0 +1,56 @@
+# Creator Watchlist — Main Account
+# Niches: fashion, travel, entertainment, sport, fun
+# Add IG usernames under each niche. The system will scrape their Reels tab
+# and queue content that meets the filter thresholds.
+
+niches:
+
+  fashion:
+    filters:
+      min_views: 500000
+      min_likes: 10000
+      posted_within_days: 7
+      max_duration_seconds: 90
+    accounts:
+      - username: ""   # e.g. zoella, chiara.ferragni
+      - username: ""
+
+  travel:
+    filters:
+      min_views: 300000
+      min_likes: 5000
+      posted_within_days: 14
+      max_duration_seconds: 90
+    accounts:
+      - username: ""   # e.g. muradosmann, gypsea_lust
+      - username: ""
+
+  entertainment:
+    filters:
+      min_views: 1000000
+      min_likes: 20000
+      posted_within_days: 3
+      max_duration_seconds: 60
+    accounts:
+      - username: ""
+      - username: ""
+
+  sport:
+    filters:
+      min_views: 500000
+      min_likes: 10000
+      posted_within_days: 7
+      max_duration_seconds: 90
+    accounts:
+      - username: ""   # e.g. nba, espn, bleacherreport
+      - username: ""
+
+  fun:
+    filters:
+      min_views: 500000
+      min_likes: 15000
+      posted_within_days: 3
+      max_duration_seconds: 60
+    accounts:
+      - username: ""
+      - username: ""
