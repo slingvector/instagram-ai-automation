@@ -34,5 +34,25 @@ def main():
         logger.info(f"  {i}. {item.platform.upper()} - {item.url}")
         logger.info(f"     Niche: {item.niche} | Views: {item.view_count} | Query: {item.raw_metadata.get('query')}")
 
+    logger.info("\n--- Commencing Actual Video Download Test (First 3 items) ---")
+    
+    from src.ingestion.downloader import UniversalDownloader
+    from pathlib import Path
+    
+    downloader = UniversalDownloader(output_dir=Path("data/downloads/cross_platform"))
+    success_count = 0
+    
+    for i, item in enumerate(items[:3], 1):
+        logger.info(f"[{i}/3] Downloading {item.platform} video: {item.url}")
+        result = downloader.download(item.url, filename_hint=f"{item.platform}_{i}")
+        
+        if result.success:
+            logger.info(f"  ✅ SUCCESS: {result.video_path}")
+            success_count += 1
+        else:
+            logger.error(f"  ❌ FAILED: {result.error}")
+            
+    logger.info(f"Cross-platform download test complete. {success_count}/3 videos saved.")
+
 if __name__ == "__main__":
     main()
