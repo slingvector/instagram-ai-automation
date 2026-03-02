@@ -1,16 +1,15 @@
-# Exclusive Account Watchlist
-# ISOLATED — posts to exclusive-account only. Never merged with main watchlist.
-# Niche: explicit content
+# config/exclusive_watchlist.yaml
 
-niche: explicit
-target_account: exclusive
+# Exclusive watchlist for highly-targeted isolated accounts.
+# These bypass generic limits and are strictly monitored.
 
 filters:
-  min_views: 200000
+  min_views: 100000      # 100K (lower barrier)
   min_likes: 5000
-  posted_within_days: 7
-  max_duration_seconds: 120
+  posted_within_days: 14
 
-accounts:
-  - username: ""   # Add IG usernames here
-  - username: ""
+creators:
+  explicit:
+    # NSFW or edge accounts that must be strictly separated 
+    # from the main content factory stream.
+    - "some_nsfw_example_account"
