@@ -1,56 +1,32 @@
-# Cross-Platform Watchlist
-# yt-dlp handles all platforms natively.
-# Add account/channel URLs and per-platform filters.
+# config/cross_platform.yaml
 
-platforms:
+# Map of platform -> niches -> target accounts/hashtags/queries
+# Used by UC4 (Cross-Platform Adapter) to find viral content outside of Instagram
 
-  youtube:
-    enabled: true
-    filters:
-      min_views: 500000
-      min_likes: 10000
-      max_duration_seconds: 90
-    accounts:
-      - url: ""     # e.g. https://www.youtube.com/@MrBeast/shorts
-        niche: entertainment
-      - url: ""
-        niche: sport
+# TikTok removed due to regional restrictions (India)
 
-  tiktok:
-    enabled: true
-    filters:
-      min_views: 300000
-      min_likes: 5000
-      max_duration_seconds: 60
-    accounts:
-      - url: ""     # e.g. https://www.tiktok.com/@khaby.lame
-        niche: fun
-      - url: ""
-        niche: fashion
+youtube_shorts:
+  sport:
+    - "ESPN" 
+    - "House of Highlights"
+  entertainment:
+    - "MrBeast"
+    - "Dude Perfect"
+  fashion:
+    - "Wisdm"
+  travel:
+    - "Beautiful Destinations"
 
-  facebook:
-    enabled: false
-    filters:
-      min_views: 200000
-      min_likes: 2000
-      max_duration_seconds: 90
-    accounts:
-      - url: ""
-        niche: entertainment
+snapchat_spotlight:
+  fun:
+    - "meme_central"
+    - "daily_laughs"
 
-  snapchat:
-    enabled: false
-    filters:
-      min_views: 100000
-      max_duration_seconds: 60
-    accounts:
-      - url: ""
-        niche: fun
+telegram:
+  explicit:
+    - "t.me/nsfw_example_channel" 
 
-  telegram:
-    enabled: false
-    filters:
-      max_duration_seconds: 90
-    accounts:
-      - url: ""     # e.g. https://t.me/s/breaking_news
-        niche: entertainment
+twitter:
+  sport:
+    - "BleacherReport"
+    - "espn"
