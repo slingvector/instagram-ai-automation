@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Fallback open-source/creative-commons or generic IG-friendly B-roll video
 # In production, this would be selected dynamically from a local asset vault.
-GENERIC_BROLL_URL = "https://www.youtube.com/watch?v=aqz-KE-bpKQ"  # Big Buck Bunny 60fps 4K as a safe placeholder
+GENERIC_BROLL_URL = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_1MB.mp4"
 
 class TrendingAdapter(SourceAdapter):
     source_type = SourceType.TRENDING
