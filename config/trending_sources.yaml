@@ -1,53 +1,25 @@
-# Trending Sources Config
-# Used by UC3 TrendingAdapter. Add/remove sources freely.
+# config/trending_sources.yaml
 
-# ── Reddit (no API key needed) ────────────────────────────────────────────────
-reddit:
-  enabled: true
-  subreddits:
-    - "videos"
+# Configuration for UC3: Real-Time Trending Monitor
+# Centralizes viral trends from multi-platform sources to generate reaction or text-card Reels.
+
+sources:
+  reddit:
+    # Subreddits to monitor for viral video or text content
+    - "all"
     - "funny"
-    - "sports"
-    - "fashion"
-    - "travel"
-    - "entertainment"
-  min_score: 5000          # Reddit upvotes threshold
-  time_filter: "day"       # 'hour' | 'day' | 'week'
-
-# ── Google Trends (pytrends — no key needed) ──────────────────────────────────
-google_trends:
-  enabled: true
-  geo: "US"                # Country code
-  timeframe: "now 1-d"     # Last 24h
-
-# ── YouTube Trending (requires YOUTUBE_API_KEY in .env) ───────────────────────
-youtube:
-  enabled: true
-  region_code: "US"
-  category_ids:            # YouTube video category IDs
-    - 17    # Sports
-    - 23    # Comedy
-    - 24    # Entertainment
-    - 26    # How-to & Style (fashion)
-    - 19    # Travel & Events
-  max_results: 20
-
-# ── RSS News Feeds ────────────────────────────────────────────────────────────
-rss:
-  enabled: true
-  feeds:
-    - name: "BBC World"
-      url: "http://feeds.bbci.co.uk/news/rss.xml"
-    - name: "Reuters"
-      url: "https://feeds.reuters.com/reuters/topNews"
-    - name: "AP News"
-      url: "https://rsshub.app/apnews/topics/apf-topnews"
-    - name: "Al Jazeera"
-      url: "https://www.aljazeera.com/xml/rss/all.xml"
-
-# ── Telegram Public Channels (requires TELEGRAM_API_ID, TELEGRAM_API_HASH) ────
-telegram:
-  enabled: false           # Enable when Telegram credentials configured
-  channels:
-    - "@breakingnews"
-    - "@sports_world"
+    - "damnthatsinteresting"
+    - "news"
+    
+  youtube:
+    # Specific youtube trending endpoints or channel IDs
+    - "trending"
+    
+  rss:
+    # Standard news and Google Trends RSS feeds for text-card generation
+    # The adapter will assign a generic B-roll background video for these.
+    - "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"
+    - "http://feeds.bbci.co.uk/news/rss.xml"
+    
+filters:
+  reddit_min_upvotes: 20000
