@@ -87,6 +87,12 @@ class AppiumPostingService:
         options.no_reset = True          # Stay logged in — critical
         options.new_command_timeout = NEW_COMMAND_TIMEOUT
         options.auto_grant_permissions = True
+        
+        # Explicitly instruct Appium server to use the host machine's ADB daemon socket 
+        # (required for Dockerized Appium to see USB-attached phones on macOS)
+        options.set_capability("appium:adbHost", "host.docker.internal")
+        options.set_capability("appium:adbPort", 5037)
+        
         # Note: skipServerInstallation removed so Appium can reinstall UIAutomator2 APKs if needed
         if DEVICE_UDID:
             options.udid = DEVICE_UDID
@@ -94,7 +100,7 @@ class AppiumPostingService:
 
     # ── Core Posting Flow ─────────────────────────────────────────────────────
 
-    def prepare_reel_post(self, video_device_path: str, caption: str) -> bool:
+    def prepare_reel_post(self, video_device_path: str, caption: str, needs_audio: bool = False) -> bool:
         """
         Navigates Instagram to a ready-to-share Reel draft.
 
@@ -103,8 +109,9 @@ class AppiumPostingService:
           2. Tap the "+" create button
           3. Select "Reel" tab
           4. Choose the video from device gallery
-          5. Next → apply caption
-          6. STOP — leaves draft open for human review (does NOT tap Share)
+          5. [Optional] Add trending audio if original was muted
+          6. Next → apply caption
+          7. STOP — leaves draft open for human review (does NOT tap Share)
 
         Returns True if draft is staged successfully.
         Raises RuntimeError on unrecoverable error.
@@ -147,6 +154,11 @@ class AppiumPostingService:
                 return False
             time.sleep(WAIT_MEDIUM)
             self._save_debug_state("04_after_video_select")
+
+            if needs_audio:
+                logger.info("Step 4.5: Video audio was muted by source. Equipping a trending IG audio track.")
+                self._add_trending_audio()
+                self._save_debug_state("04b_after_audio_add")
 
             logger.info("Step 5: Tap 'Next' to proceed to caption screen.")
             time.sleep(3)  # Extra wait for video to fully load in Reel editor
@@ -388,6 +400,39 @@ class AppiumPostingService:
         if not self._tap_by_text_xml("Next", timeout=WAIT_LONG):
             logger.warning("Next not in XML — tapping known coords (1237, 2969) from recorded XML.")
             self._adb.tap(1237, 2969)  # Bottom-right Next button confirmed from XML recording
+
+    def _add_trending_audio(self):
+        """
+        Invoked when the source video has no audio or is flagged for copyright.
+        Navigates the internal Reel Editor UI to add a trending track.
+        """
+        logger.info("Attempting to add trending audio...")
+        
+        # 1. Tap the Audio music note icon. 
+        # Look for content-desc "Audio" or tap known region (often at top toolbar, ex: (415, 180))
+        if not self._tap_by_text_xml("Audio", timeout=WAIT_SHORT, exact_match=False):
+            logger.warning("Audio button not found in XML. Tapping known Top-Toolbar Audio coordinates (415, 180).")
+            self._adb.tap(415, 180)
+        time.sleep(WAIT_SHORT)
+        
+        # 2. Tap the first suggested track under "For you"
+        # We look for a layout container that represents a track row. 
+        # In IG, audio rows usually have a content-desc with the track name or "Play".
+        # If XML fails, we tap the approximate center of the screen where the first track usually sits.
+        logger.info("Selecting top trending track from 'For you' list...")
+        if not self._tap_by_text_xml("Play", timeout=WAIT_SHORT, exact_match=False, min_y=500):
+            logger.warning("Track row not found in XML. Tapping known first-track coordinate (720, 800).")
+            self._adb.tap(720, 800)
+        time.sleep(WAIT_SHORT)
+        
+        # 3. Tap "Done" at the top right to apply the track
+        logger.info("Confirming audio selection (Done).")
+        if not self._tap_by_text_xml("Done", timeout=WAIT_SHORT, exact_match=False):
+            logger.warning("Done button not found in XML. Tapping known Done coordinate (1300, 150).")
+            self._adb.tap(1300, 150)
+        
+        time.sleep(WAIT_SHORT)
+        logger.info("Trending audio successfully applied.")
 
     def _enter_caption(self, caption: str):
         """

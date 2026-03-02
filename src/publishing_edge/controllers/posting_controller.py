@@ -56,8 +56,11 @@ class PostingController:
         caption = ai_meta.get("caption", "")
         hashtags = ai_meta.get("hashtags", [])
         full_caption = f"{caption}\n\n{' '.join(hashtags)}" if hashtags else caption
+        
+        # Audio muted flag set by the Downloader
+        audio_muted = data.get("audio_muted", False)
 
-        logger.info(f"[{job_id}] Starting posting pipeline. URI: {gcs_uri}")
+        logger.info(f"[{job_id}] Starting posting pipeline. URI: {gcs_uri} | Muted: {audio_muted}")
 
         # ── Step 1: Lock job to prevent double processing ────────────────────
         job_ref.update({
@@ -72,7 +75,8 @@ class PostingController:
             # ── Step 3: Stage on Instagram (no Share yet) ─────────────────────
             self.appium.prepare_reel_post(
                 video_device_path=device_video_path,
-                caption=full_caption
+                caption=full_caption,
+                needs_audio=audio_muted
             )
 
             if HUMAN_REVIEW_ENABLED:
