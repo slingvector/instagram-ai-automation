@@ -134,6 +134,11 @@ class DMAdapter(SourceAdapter):
             "locale": "en-US",
             "device_scale_factor": 2,
         }
+        
+        proxy_url = os.environ.get("PROXY_SERVER")
+        if proxy_url:
+            context_kwargs["proxy"] = {"server": proxy_url}
+            
         if self.session_file.exists():
             context_kwargs["storage_state"] = str(self.session_file)
 

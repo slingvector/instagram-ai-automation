@@ -97,6 +97,11 @@ class CreatorAdapter(SourceAdapter):
                 "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
                 "viewport": {"width": 1280, "height": 800},
             }
+            
+            proxy_url = os.environ.get("PROXY_SERVER")
+            if proxy_url:
+                context_kwargs["proxy"] = {"server": proxy_url}
+                
             if self.session_file.exists():
                 context_kwargs["storage_state"] = str(self.session_file)
 
