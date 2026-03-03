@@ -1,0 +1,35 @@
+# Dockerfile.ingest
+# Defines the isolated container environment for the MCR Ingestion Scheduler on Cloud VPS.
+
+FROM python:3.11-slim
+
+# Prevent Python from writing pyc files and keep stdout unbuffered
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /app
+
+# Install system dependencies
+# ffmpeg: required by yt-dlp for merging video/audio formats and our post-processing
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    libsqlite3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install python dependencies first to leverage Docker layer caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright browser and its OS-level system dependencies
+RUN playwright install --with-deps chromium
+
+# Copy the application source code and configurations
+COPY src/ /app/src/
+COPY config/ /app/config/
+
+# We map PYTHONPATH so python can resolve 'src' as a module
+ENV PYTHONPATH=/app
+
+# Start the concurrent ingestion daemon
+CMD ["python", "src/ingestion/scheduler.py"]
