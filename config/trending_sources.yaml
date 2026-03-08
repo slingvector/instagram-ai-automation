@@ -4,22 +4,63 @@
 # Centralizes viral trends from multi-platform sources to generate reaction or text-card Reels.
 
 sources:
+  telegram_channels:
+    # Major OSINT and breaking news Telegram channels
+    - "intelslava"
+    - "geopolitics_live"
+    - "bellestriker"
+    - "liveuamap"
+    - "atlas_news"
+    
+  instagram_pages:
+    # Influential IG pages focusing on geopolitics and news
+    - "atlas.news"
+    - "geopoliticalfutures"
+    - "the.intel.drop"
+    - "modern_combat_history"
+    - "the_war_diaries"
+
   reddit:
-    # Subreddits to monitor for viral video or text content
-    - "all"
-    - "funny"
-    - "damnthatsinteresting"
-    - "news"
+    # Subreddits to monitor for viral geopolitical/conflict content
+    - "worldnews"
+    - "combatfootage"
+    - "geopolitics"
+    - "defense"
+    - "energy"
+    - "history"
+    - "internationalpolitics"
+    - "credibledefense"
+    - "lesscredibledefense"
+    - "military"
     
-  youtube:
-    # Specific youtube trending endpoints or channel IDs
-    - "trending"
+  youtube_channels:
+    # Specific influential YouTube channel IDs for geopolitics
+    - "UCs5A9aLndmU8sB9t22rKk5A" # Example: Stratfor
+    - "UCpwvZwUam-URQ9sE7zGEe2w" # Example: Zeihan on Geopolitics
+    - "UC1yBKRuGpC1tSM73A0lA1Bw" # Example: Breaking Points
+    - "UCLwBr9ZfXF1WbZ59wO9Gog"  # Example: Defense News
     
+  search_terms:
+    # High-volume SEO keywords for searching recent content on all platforms
+    - "iran israel conflict"
+    - "america middle east policy"
+    - "warzone combat footage"
+    - "defense tech future"
+    - "multipolar world order"
+    - "energy security"
+    - "historical world wars"
+    
+  hashtags:
+    - "#geopolitics"
+    - "#middleeastconflict"
+    - "#defensetech"
+    - "#energysecurity"
+    - "#globalconflict"
+
   rss:
-    # Standard news and Google Trends RSS feeds for text-card generation
-    # The adapter will assign a generic B-roll background video for these.
     - "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"
-    - "http://feeds.bbci.co.uk/news/rss.xml"
+    - "http://feeds.bbci.co.uk/news/world/middle_east/rss.xml" # Targeted to ME
+    - "https://mwi.westpoint.edu/feed/" # Modern War Institute at West Point
     
 filters:
   reddit_min_upvotes: 20000

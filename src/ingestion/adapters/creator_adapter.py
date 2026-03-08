@@ -98,8 +98,10 @@ class CreatorAdapter(SourceAdapter):
                 "viewport": {"width": 1280, "height": 800},
             }
             
+            use_proxy = os.environ.get("USE_PROXY_FOR_INGESTION", "false").lower() == "true"
             proxy_url = os.environ.get("PROXY_SERVER")
-            if proxy_url:
+            
+            if use_proxy and proxy_url:
                 context_kwargs["proxy"] = {"server": proxy_url}
                 
             if self.session_file.exists():

@@ -11,27 +11,20 @@ filters:
   max_duration_seconds: 90
 
 creators:
-  fashion:
-    - "wisdm"
-    - "thefashioncouple"
-    - "teachingmensfashion"
+  geopolitics:
+    - "geopolitics"
+    - "stratfor"
+    - "theeconomist"
     
-  travel:
-    - "beautifuldestinations"
-    - "earthofficial"
-    - "taramilktea"
+  defense_tech:
+    - "lockheedmartin"
+    - "bostondynamics"
+    - "defensenews"
     
-  entertainment:
-    - "netflix"
-    - "complex"
-    - "pubity"
+  energy_security:
+    - "bloombergenergy"
+    - "oilandgasjournal"
     
-  sport:
-    - "houseofhighlights"
-    - "espn"
-    - "sportscenter"
-    
-  fun:
-    - "daquan"
-    - "fuckjerry"
-    - "kalesalad"
+  historical_wars:
+    - "historyphotographed"
+    - "worldwar2_history"

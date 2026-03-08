@@ -45,8 +45,12 @@ class TrendingAdapter(SourceAdapter):
         combined = {
             "sources": {
                 "reddit": [],
-                "youtube": [],
-                "rss": []
+                "youtube_channels": [],
+                "rss": [],
+                "telegram_channels": [],
+                "instagram_pages": [],
+                "search_terms": [],
+                "hashtags": []
             },
             "filters": {
                 "reddit_min_upvotes": 20000
@@ -79,13 +83,21 @@ class TrendingAdapter(SourceAdapter):
         for sub in set(sources.get("reddit", [])):
             items.extend(self._fetch_reddit(sub))
             
-        # 2. Fetch from YouTube Trending
-        if sources.get("youtube"):
-            items.extend(self._fetch_youtube_trending())
+        # 2. Fetch from YouTube specifically via SEO search terms
+        for term in set(sources.get("search_terms", [])):
+            items.extend(self._fetch_youtube_search(term))
             
         # 3. Fetch from RSS Feeds
         for feed in set(sources.get("rss", [])):
             items.extend(self._fetch_rss(feed))
+            
+        # 4. Fetch from specific Instagram news aggregators
+        for ig_page in set(sources.get("instagram_pages", [])):
+            items.extend(self._fetch_instagram_page(ig_page))
+            
+        # 5. Fetch breaking news from Telegram 
+        for tg_channel in set(sources.get("telegram_channels", [])):
+            items.extend(self._fetch_telegram_channel(tg_channel))
             
         return items
 
@@ -101,11 +113,11 @@ class TrendingAdapter(SourceAdapter):
             return b""
 
     def _fetch_reddit(self, subreddit: str) -> List[ContentItem]:
-        logger.info(f"Scanning Reddit r/{subreddit}...")
-        min_upvotes = self.config.get("filters", {}).get("reddit_min_upvotes", 20000)
+        logger.info(f"Scanning Reddit r/{subreddit} (Percentile Selection, 24-72h)...")
         items = []
         
-        url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=25"
+        # Pull larger quota for percentile selection
+        url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=100"
         data_bytes = self._safe_get(url)
         if not data_bytes:
             return items
@@ -114,20 +126,42 @@ class TrendingAdapter(SourceAdapter):
             data = json.loads(data_bytes.decode('utf-8'))
             children = data.get('data', {}).get('children', [])
             
+            import time
+            current_time = time.time()
+            # Between 24 and 72 hours old
+            min_age = current_time - (24 * 3600)
+            max_age = current_time - (72 * 3600)
+            
+            valid_posts = []
             for child in children:
                 post = child.get('data', {})
-                ups = post.get('ups', 0)
+                created_utc = post.get('created_utc', 0)
                 
-                if ups < min_upvotes:
+                # Check 24-72h window
+                if created_utc > min_age or created_utc < max_age:
+                    continue
+                
+                score = post.get('ups', 0) # Assuming 'ups' is the score
+                if score < 500 and not post.get("is_original_content", False):
                     continue
                     
-                post_url = "https://www.reddit.com" + post.get('permalink', '')
+                valid_posts.append(post)
+                
+            if not valid_posts:
+                return items
+                
+            # Percentile Selection: Top 10%
+            valid_posts.sort(key=lambda x: x.get('ups', 0), reverse=True)
+            top_count = max(1, int(len(valid_posts) * 0.10))
+            top_posts = valid_posts[:top_count]
+            
+            for post in top_posts:
                 title = post.get('title', '')
+                ups = post.get('ups', 0)
                 is_video = post.get('is_video', False)
+                post_url = "https://www.reddit.com" + post.get('permalink', '')
                 content_url = post.get('url', post_url)
                 
-                # If it's a native Reddit video, yt-dlp can handle the post permalink.
-                # If it's pure text, we assign the generic B-roll.
                 target_url = post_url if is_video else GENERIC_BROLL_URL
                 
                 item = ContentItem(
@@ -135,68 +169,129 @@ class TrendingAdapter(SourceAdapter):
                     platform=Platform.REDDIT,
                     source_type=self.source_type,
                     niche=Niche.ENTERTAINMENT if subreddit in ["all", "funny"] else Niche.FUN,
-                    engagement_score=ups * 1.0,
-                    view_count=ups, # treating upvotes as views for ranking
+                    engagement_score=float(ups), # Score stored raw, weighted at pipeline level
+                    view_count=ups,
                     like_count=ups,
                     title=title,
                     raw_metadata={
                         "reddit_post_url": post_url,
                         "content_url": content_url,
                         "is_video": is_video,
-                        "text_prompt": title # For text burn-in
+                        "text_prompt": title
                     }
                 )
                 
-                # Use a specific dedup key across Reddit
                 message_id = f"reddit::{post.get('id')}"
                 if not self.dedup.is_dm_seen(message_id):
                     self.dedup.register_dm(message_id, post_url, target_url)
                     items.append(item)
-                    logger.info(f"✅ Found Viral Reddit Post: {title} ({ups} upvotes)")
+                    logger.info(f"✅ Found Top Percentile Reddit Post: {title} ({ups} ups)")
                     
         except Exception as e:
             logger.error(f"Failed parsing Reddit r/{subreddit}: {e}")
             
         return items
 
-    def _fetch_youtube_trending(self) -> List[ContentItem]:
-        logger.info("Scanning YouTube Trending...")
+    def _fetch_youtube_search(self, term: str) -> List[ContentItem]:
+        logger.info(f"Scanning YouTube for SEO term: '{term}' (Percentile Selection, Max 72h old)...")
         items = []
-        # yt-dlp can dump the trending feed playlist
-        cmd = ["yt-dlp", "--flat-playlist", "--dump-json", "https://www.youtube.com/feed/trending"]
+        # yt-dlp search for the top 50 videos related to the SEO keyword and date filters
+        cmd = ["yt-dlp", "--flat-playlist", "--dump-json", "--dateafter", "today-3days", f"ytsearch50:{term}"]
         try:
             import subprocess
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             if proc.returncode == 0:
+                valid_videos = []
                 for line in proc.stdout.strip().splitlines():
                     try:
                         data = json.loads(line)
                         vid_id = data.get("id")
-                        vid_url = f"https://www.youtube.com/watch?v={vid_id}"
-                        view_count = data.get("view_count", 0)
-                        
-                        # Apply naive filter (1M views for YT trending)
-                        if view_count and int(view_count) > 1000000:
-                            message_id = f"yt_trending::{vid_id}"
-                            if not self.dedup.is_dm_seen(message_id):
-                                item = ContentItem(
-                                    url=vid_url,
-                                    platform=Platform.YOUTUBE,
-                                    source_type=self.source_type,
-                                    niche=Niche.ENTERTAINMENT,
-                                    engagement_score=int(view_count) * 0.1,
-                                    view_count=int(view_count),
-                                    title=data.get("title", ""),
-                                    duration_seconds=data.get("duration"),
-                                    raw_metadata={"text_prompt": data.get("title", "")}
-                                )
-                                self.dedup.register_dm(message_id, vid_url, vid_url)
-                                items.append(item)
-                                logger.info(f"✅ Found YT Trending: {item.title} ({item.view_count} views)")
+                        if not vid_id:
+                            continue
+                            
+                        duration = data.get("duration", 0)
+                        if duration and duration > 3600:
+                            continue # skip massive hour-long streams
+                            
+                        # yt-dlp dateafter handles recency, collect valid items
+                        valid_videos.append(data)
                     except json.JSONDecodeError:
                         continue
+                        
+                if not valid_videos:
+                    return items
+                    
+                # Percentile selection (Top 10%)
+                valid_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
+                top_count = max(1, int(len(valid_videos) * 0.10))
+                top_videos = valid_videos[:top_count]
+                
+                for data in top_videos:
+                    vid_id = data.get("id")
+                    vid_url = f"https://www.youtube.com/watch?v={vid_id}"
+                    view_count = data.get("view_count", 0)
+                    
+                    message_id = f"yt_seo::{vid_id}"
+                    if not self.dedup.is_dm_seen(message_id):
+                        item = ContentItem(
+                            url=vid_url,
+                            platform=Platform.YOUTUBE,
+                            source_type=self.source_type,
+                            niche=Niche.ENTERTAINMENT, 
+                            engagement_score=float(view_count),
+                            view_count=view_count,
+                            title=data.get("title", ""),
+                            duration_seconds=data.get("duration"),
+                            raw_metadata={"text_prompt": data.get("title", ""), "seo_term": term}
+                        )
+                        self.dedup.register_dm(message_id, vid_url, vid_url)
+                        items.append(item)
+                        logger.info(f"✅ Found Top Percentile SEO YT Hit ['{term}']: {item.title} ({item.view_count} views)")
+
         except Exception as e:
-            logger.error(f"Failed fetching YouTube Trending via yt-dlp: {e}")
+            logger.error(f"Failed fetching YouTube SEO terms via yt-dlp: {e}")
+        return items
+
+    def _fetch_instagram_page(self, page_name: str) -> List[ContentItem]:
+        logger.info(f"Scanning specific Instagram news page: {page_name}")
+        items = []
+        try:
+            from src.ingestion.adapters.creator_adapter import CreatorAdapter
+            import tempfile
+            
+            # Create a temporary config to target just this news page with relaxed viral thresholds
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
+                mock_config = {
+                    "filters": {"min_views": 100000, "min_likes": 5000},
+                    "creators": {"news": [page_name]}
+                }
+                yaml.dump(mock_config, tmp)
+                tmp_path = tmp.name
+                
+            try:
+                # Instantiate and run the CreatorAdapter securely on the temporary config
+                headless = str(os.environ.get("HEADLESS", "true")).lower() == "true"
+                adapter = CreatorAdapter(config_paths=[tmp_path], headless=headless)
+                items = adapter.fetch()
+                
+                # Update source_type to reflect it was found via Trending pipeline
+                for item in items:
+                    item.source_type = self.source_type
+                    
+            finally:
+                import os
+                os.remove(tmp_path)
+                
+        except Exception as e:
+            logger.error(f"Failed standing up CreatorAdapter instance for IG page {page_name}: {e}")
+            
+        return items
+        
+    def _fetch_telegram_channel(self, channel_name: str) -> List[ContentItem]:
+        logger.info(f"Scanning Telegram OSINT channel: {channel_name}")
+        items = []
+        # TODO: Implement Telethon-based scraping looking for highest viewed MP4s in the channel
+        # within the last 12 hours.
         return items
 
     def _fetch_rss(self, feed_url: str) -> List[ContentItem]:

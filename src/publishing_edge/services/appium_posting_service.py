@@ -90,8 +90,8 @@ class AppiumPostingService:
         
         # Explicitly instruct Appium server to use the host machine's ADB daemon socket 
         # (required for Dockerized Appium to see USB-attached phones on macOS)
-        options.set_capability("appium:adbHost", "host.docker.internal")
-        options.set_capability("appium:adbPort", 5037)
+        # Explicitly declare the ADB binary so Appium skips the strict ANDROID_HOME folder checks
+        options.set_capability("appium:adbExecutable", "/opt/homebrew/bin/adb")
         
         # Note: skipServerInstallation removed so Appium can reinstall UIAutomator2 APKs if needed
         if DEVICE_UDID:
@@ -120,8 +120,8 @@ class AppiumPostingService:
         d = self._driver
 
         try:
-            logger.info("Step 1: Wake screen and ensure Instagram is in foreground.")
-            self._adb.wake_screen()
+            logger.info("Step 1: Wake screen, unlock device, and ensure Instagram is in foreground.")
+            self._adb.unlock_device()
             self._adb.launch_instagram()
             time.sleep(WAIT_MEDIUM)
             self._save_debug_state("01_instagram_launched")

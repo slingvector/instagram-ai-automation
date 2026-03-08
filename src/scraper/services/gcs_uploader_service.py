@@ -21,10 +21,10 @@ class GCSUploaderService:
         self.client = storage.Client()
         self.bucket = self.client.bucket(self.bucket_name)
 
-    def download_and_upload(self, reel_url: str) -> str:
+    def download_and_upload(self, reel_url: str) -> tuple[str, float]:
         """
         Downloads a Reel and uploads it to GCS.
-        Returns the GCS URI (gs://bucket/filename.mp4).
+        Returns a tuple: (GCS URI, duration_in_seconds).
         Raises an exception if download or upload fails.
         """
         job_id = str(uuid.uuid4())[:8]
@@ -39,7 +39,7 @@ class GCSUploaderService:
                     "yt-dlp",
                     "--quiet",
                     "--no-warnings",
-                    "-f", "mp4",
+                    "-f", "best[height<=1080]", # Forcing smaller files
                     "-o", output_path,
                     reel_url,
                 ],
@@ -60,10 +60,37 @@ class GCSUploaderService:
                 output_path = str(found[0])
                 filename = Path(output_path).name
 
+            # Auto-Trim long videos to 60 seconds
+            import json
+            duration = 0.0
+            probe_result = subprocess.run([
+                "ffprobe", "-v", "error", "-show_entries", "format=duration", 
+                "-of", "default=noprint_wrappers=1:nokey=1", output_path
+            ], capture_output=True, text=True)
+            
+            try:
+                duration = float(probe_result.stdout.strip())
+                if duration > 180: # 3 minutes
+                    logger.info(f"Video duration ({duration}s) exceeds 3 mins. Trimming to first 60s...")
+                    trimmed_path = os.path.join(tmpdir, f"trimmed_{filename}")
+                    trim_result = subprocess.run([
+                        "ffmpeg", "-y", "-i", output_path,
+                        "-t", "60", "-c", "copy", trimmed_path
+                    ], capture_output=True, text=True)
+                    if trim_result.returncode == 0 and os.path.exists(trimmed_path):
+                        output_path = trimmed_path
+                        filename = f"trimmed_{filename}"
+                        duration = 60.0
+                    else:
+                        logger.warning(f"FFmpeg trim failed. Uploading raw video. {trim_result.stderr}")
+            except Exception as e:
+                logger.warning(f"Failed to probe duration or trim: {e}")
+
             logger.info(f"Uploading {filename} to GCS bucket {self.bucket_name} ...")
             blob = self.bucket.blob(f"reels/{filename}")
             blob.upload_from_filename(output_path, content_type="video/mp4")
 
             gcs_uri = f"gs://{self.bucket_name}/reels/{filename}"
             logger.info(f"Upload complete: {gcs_uri}")
-            return gcs_uri
+            return gcs_uri, duration
+

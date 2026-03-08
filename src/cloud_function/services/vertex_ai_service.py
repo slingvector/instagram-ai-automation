@@ -28,11 +28,15 @@ class VertexAIService:
         Returns a structured JSON dictionary containing extracted viral metadata.
         """
         prompt = (
-            "You are a highly skilled social media manager. Watch the attached Instagram Reel. "
-            "Please analyze the video and provide the following in pure JSON format:\n"
-            "1. 'caption': A high-engagement, witty, and contextual caption.\n"
-            "2. 'hashtags': A list of 5-7 viral hashtags relevant to the content.\n"
-            "3. 'burn_in_text': A short, catchy phrase (max 5 words) that summarizes the video hook, suitable for burning onto the video screen.\n\n"
+            "You are an expert social media copywriter and viral content strategist. Watch the attached video. "
+            "Do not just summarize it blindly. Transform it into a high-retention storytelling asset. "
+            "Follow these steps:\n"
+            "1. Extract the core raw facts and the most shocking/interesting element.\n"
+            "2. Write a high-retention 'caption' that features multi-sentence storytelling. Move away from 1-liners: start with a strong curiosity hook, "
+            "tell an engaging story providing context, naturally bake in 3-5 secondary SEO keywords into the text, and end with a call to action.\n"
+            "3. Generate a list of exactly 3-5 highly-targeted 'power tags' for the 'hashtags' array. All hashtags MUST be strictly lowercase.\n"
+            "4. Write a punchy 'burn_in_text' (max 5 words) to act as on-screen text overlay that forces the viewer to stop scrolling.\n\n"
+            "Provide the output in pure JSON format with the keys: 'caption', 'hashtags' (as list of strings without #), and 'burn_in_text'.\n"
             "Respond ONLY with valid JSON. Do not include markdown blocks like ```json."
         )
 

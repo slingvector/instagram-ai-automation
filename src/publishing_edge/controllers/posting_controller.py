@@ -6,6 +6,7 @@ from google.cloud import firestore, storage
 
 from src.publishing_edge.services.adb_client import ADBClient
 from src.publishing_edge.services.appium_posting_service import AppiumPostingService
+from src.publishing_edge.services.warmup_service import WarmupService
 from src.publishing_edge.config import (
     GCP_PROJECT_ID, GCS_PROCESSED_BUCKET,
     DEVICE_UDID, HUMAN_REVIEW_ENABLED
@@ -37,18 +38,20 @@ class PostingController:
         self.gcs = storage.Client(project=GCP_PROJECT_ID)
         self.adb = ADBClient(device_udid=DEVICE_UDID)
         self.appium = AppiumPostingService()
+        self.warmup = WarmupService()
 
-    def execute(self, job_id: str):
+    def execute(self, job_id: str) -> bool:
         """
         Main entry point. Fetches the job doc, runs the full posting pipeline.
         All Firestore status transitions happen here.
+        Returns True if the post was successfully PUBLISHED, False otherwise.
         """
         job_ref = self.db.collection("job_queue").document(job_id)
         job = job_ref.get()
 
         if not job.exists:
             logger.error(f"Job {job_id} not found in Firestore.")
-            return
+            return False
 
         data = job.to_dict()
         gcs_uri = data.get("gcs_processed_video_uri") or data.get("gcs_raw_video_uri")
@@ -72,7 +75,15 @@ class PostingController:
             # ── Step 2: Download processed video from GCS to device ──────────
             device_video_path = self._download_to_device(gcs_uri, job_id)
 
-            # ── Step 3: Stage on Instagram (no Share yet) ─────────────────────
+            # ── Step 3: Warm up account organically before posting ────────────
+            logger.info(f"[{job_id}] Initiating 1-minute organic warmup...")
+            self.warmup.perform_warmup(duration_minutes=1)
+
+            logger.info(f"[{job_id}] Force-stopping Instagram for clean posting state...")
+            self.adb.stop_instagram()
+            time.sleep(2)
+
+            # ── Step 4: Stage on Instagram (no Share yet) ─────────────────────
             self.appium.prepare_reel_post(
                 video_device_path=device_video_path,
                 caption=full_caption,
@@ -97,6 +108,7 @@ class PostingController:
                         "posted_at": firestore.SERVER_TIMESTAMP,
                     })
                     logger.info(f"[{job_id}] ✅ Posted to Instagram.")
+                    return True
 
                 elif decision == "REJECTED":
                     self.appium.cancel_post()
@@ -105,6 +117,7 @@ class PostingController:
                         "rejected_at": firestore.SERVER_TIMESTAMP,
                     })
                     logger.info(f"[{job_id}] ❌ Post rejected by reviewer.")
+                    return False
 
                 else:  # timeout
                     self.appium.cancel_post()
@@ -113,6 +126,7 @@ class PostingController:
                         "error": f"No review decision after {REVIEW_TIMEOUT_MINUTES} minutes.",
                     })
                     logger.warning(f"[{job_id}] Review timed out.")
+                    return False
 
             else:
                 # Auto-post mode (HUMAN_REVIEW_ENABLED=false)
@@ -122,6 +136,7 @@ class PostingController:
                     "posted_at": firestore.SERVER_TIMESTAMP,
                 })
                 logger.info(f"[{job_id}] ✅ Auto-posted to Instagram.")
+                return True
 
         except Exception as e:
             logger.error(f"[{job_id}] Posting pipeline failed: {e}", exc_info=True)
@@ -131,6 +146,7 @@ class PostingController:
                 "failed_at": firestore.SERVER_TIMESTAMP,
             })
             self.appium.end_session()
+            return False
 
     # ── Private Helpers ────────────────────────────────────────────────────────
 
