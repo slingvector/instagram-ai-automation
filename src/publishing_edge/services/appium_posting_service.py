@@ -793,13 +793,35 @@ class AppiumPostingService:
             # ── Step 4: Tap "Send post" share button ─────────────────────────
             # CRITICAL: For your OWN posts, "Copy link" is NOT in the More Actions
             # menu. It's only accessible via the Share sheet.
-            # From copy_link recording: Send post at [583,1356][679,1540] -> (631, 1448)
-            # resource-id: com.instagram.android:id/row_feed_button_share
-            logger.info("Step 4: Tap 'Send post' share button")
-            if not self._tap_by_text_xml("Send post", timeout=WAIT_SHORT, exact_match=False):
-                logger.warning("'Send post' not found via XML. Tapping coordinate (631, 1448).")
-                self._adb.tap(631, 1448)
-            time.sleep(WAIT_MEDIUM)
+            # ID: com.instagram.android:id/direct_share_button, Bounds: [1232,1707][1408,1883] -> (1320, 1795)
+            logger.info("Step 4: Tap 'Share' button on the reel")
+            
+            # Use our robust tap mechanism, but we must check XML manually or use a helper
+            # We'll use _tap_by_text_xml but search for "Share" or the resource-id
+            found_share = False
+            start_share = time.time()
+            while time.time() - start_share < WAIT_SHORT:
+                source = self._driver.page_source
+                if source and "com.instagram.android:id/direct_share_button" in source:
+                    xml_root = ET.fromstring(source.encode('utf-8'))
+                    for node in xml_root.iter():
+                        if node.attrib.get('resource-id') == "com.instagram.android:id/direct_share_button":
+                            bounds_str = node.attrib.get('bounds')
+                            m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds_str)
+                            if m:
+                                x1, y1, x2, y2 = map(int, m.groups())
+                                self._adb.tap((x1 + x2) // 2, (y1 + y2) // 2)
+                                found_share = True
+                                break
+                if found_share:
+                    break
+                time.sleep(1)
+
+            if not found_share:
+                logger.warning("'Share' button ID not found in XML. Tapping fallback coordinate (1320, 1795).")
+                self._adb.tap(1320, 1795)
+            
+            time.sleep(3) # Explicit wait for share sheet to animate up
             self._save_debug_state("shortcode_04_share_sheet")
             
             # ── Step 5: Tap "Copy link" in the share sheet ───────────────────
@@ -840,33 +862,33 @@ class AppiumPostingService:
         Reads the Android clipboard and extracts an Instagram reel shortcode.
         
         Tries two methods:
-          1. `service call clipboard 2` (lower-level, works on most devices)
-          2. `am broadcast` with clipper app (if installed)
+          1. Appium's get_clipboard_text (reliable if settings app has focus/perms)
+          2. `service call clipboard 2` (fallback)
         
         Returns the shortcode string or None.
         """
-        # Method 1: service call clipboard
-        ret_code, stdout, stderr = self._adb._run(
-            ["shell", "service", "call", "clipboard", "2"]
-        )
         clipboard_text = ""
         
-        if ret_code == 0 and stdout:
-            try:
-                for line in stdout.strip().splitlines():
-                    if "'" in line:
-                        clipboard_text += line.split("'")[1]
-            except Exception as e:
-                logger.debug(f"Clipboard parsing (method 1) error: {e}")
-        
-        # Method 2: Try dumping via content provider (fallback)
+        # Method 1: Appium's native clipboard retrieval
+        try:
+            logger.info("Attempting to read clipboard via Appium...")
+            val = self._driver.get_clipboard_text()
+            if val:
+                clipboard_text = str(val).strip()
+        except Exception as e:
+            logger.debug(f"Appium get_clipboard_text failed: {e}")
+            
+        # Method 2: Fallback to ADB service call
         if not clipboard_text:
-            ret_code2, stdout2, _ = self._adb._run(
-                ["shell", "content", "call", "--uri", "content://clipboard/text",
-                 "--method", "getText"]
-            )
-            if ret_code2 == 0 and stdout2:
-                clipboard_text = stdout2.strip()
+            logger.info("Attempting clipboard fallback via ADB...")
+            ret_code, stdout, stderr = self._adb._run(["shell", "service", "call", "clipboard", "2"])
+            if ret_code == 0 and stdout:
+                try:
+                    for line in stdout.strip().splitlines():
+                        if "'" in line:
+                            clipboard_text += line.split("'")[1]
+                except Exception as e:
+                    logger.debug(f"Clipboard parsing error: {e}")
         
         if not clipboard_text:
             logger.warning("Could not read clipboard from device.")
