@@ -557,6 +557,55 @@ class AppiumPostingService:
         logger.warning(f"Timeout: Could not locate text '{target_text}' in XML tree.")
         return False
 
+    def _tap_bottom_tab(self, tab_name: str, timeout: int = WAIT_MEDIUM) -> bool:
+        """
+        Robustly taps a bottom navigation tab (Home, Search, Reels, Profile) by its exact
+        resource-id to avoid false positive text matches ('Profile' text matching 'Share profile').
+        """
+        tab_ids = {
+            "Home": "com.instagram.android:id/feed_tab",
+            "Search": "com.instagram.android:id/search_tab",
+            "Reels": "com.instagram.android:id/clips_tab",
+            "Profile": "com.instagram.android:id/profile_tab"
+        }
+        
+        target_id = tab_ids.get(tab_name)
+        if not target_id:
+            logger.error(f"Unknown bottom tab: {tab_name}")
+            return False
+            
+        start_time = time.time()
+        logger.info(f"Polling raw XML tree for bottom tab: '{tab_name}' ({target_id})")
+        
+        while time.time() - start_time < timeout:
+            try:
+                source = self._driver.page_source
+                if not source or target_id not in source:
+                    time.sleep(1)
+                    continue
+                
+                xml_root = ET.fromstring(source.encode('utf-8'))
+                # We also accept direct matches of the button container for clicks
+                for node in xml_root.iter():
+                    if node.attrib.get('resource-id') == target_id:
+                        bounds_str = node.attrib.get('bounds')
+                        if bounds_str:
+                            m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds_str)
+                            if m:
+                                x1, y1, x2, y2 = map(int, m.groups())
+                                cx = (x1 + x2) // 2
+                                cy = (y1 + y2) // 2
+                                logger.info(f"Found {tab_name} tab via XML at ({cx}, {cy}). Tapping now.")
+                                self._adb.tap(cx, cy)
+                                return True
+            except Exception as e:
+                logger.debug(f"XML parsing iter error: {e}")
+            
+            time.sleep(1)
+            
+        logger.warning(f"Timeout: Could not locate bottom tab '{tab_name}'.")
+        return False
+
     def _tap_element_or_coords(self, by, value, fallback_coords: tuple, timeout: int = WAIT_MEDIUM):
         """Try Appium element find, fall back to ADB tap on coordinates if package matches."""
         try:
@@ -718,18 +767,17 @@ class AppiumPostingService:
             # ── Step 1: Navigate to Profile Tab ──────────────────────────────
             logger.info("Step 1: Navigate to Profile Tab")
             # Bounds [963,2657][1432,3060] -> Safe center (1300, 2850)
-            if not self._tap_by_text_xml("Profile", timeout=WAIT_SHORT, exact_match=False):
-                logger.warning("Profile tab not found via XML. Tapping coordinate (1300, 2850).")
+            if not self._tap_bottom_tab("Profile", timeout=WAIT_SHORT):
+                logger.warning("Profile tab not found via resource-id. Tapping fallback coordinate (1300, 2850).")
                 self._adb.tap(1300, 2850)
             time.sleep(WAIT_MEDIUM)
             self._save_debug_state("shortcode_01_profile")
             
             # ── Step 2: Navigate to Reels Tab on Profile ─────────────────────
             logger.info("Step 2: Navigate to Reels Tab on Profile")
-            # From copy_link recording: Reels tab at [360,2143][720,2335] -> (540, 2239)
-            # resource-id: profile_tab_icon_view
-            if not self._tap_by_text_xml("Reels", timeout=WAIT_SHORT, exact_match=False):
-                logger.warning("Reels tab not found via XML. Tapping coordinate (540, 2239).")
+            # Profile screen reels tab: content-desc="Reels"
+            if not self._tap_by_text_xml("Reels", timeout=WAIT_SHORT, exact_match=True):
+                logger.warning("Reels tab not found via exact text match XML. Tapping coordinate (540, 2239).")
                 self._adb.tap(540, 2239)
             time.sleep(WAIT_MEDIUM)
             self._save_debug_state("shortcode_02_reels_tab")
