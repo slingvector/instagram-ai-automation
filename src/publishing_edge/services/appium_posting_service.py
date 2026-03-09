@@ -12,7 +12,7 @@ from appium.options.android import UiAutomator2Options
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, InvalidSessionIdException, WebDriverException, NoSuchElementException
 
 from src.publishing_edge.services.adb_client import ADBClient
 from src.publishing_edge.config import (
@@ -51,21 +51,71 @@ class AppiumPostingService:
     # ── Session Management ────────────────────────────────────────────────────
 
     def start_session(self):
-        """Initialize the Appium driver session. Safe to call multiple times."""
+        """Starts the Appium session. Only instantiates a new one if not alive."""
         if self._driver:
-            logger.info("Appium session already active.")
-            return
+            try:
+                # Basic check to see if driver is still responding
+                _ = self._driver.orientation
+                return
+            except Exception:
+                self._driver = None
 
-        options = self._build_options()
-        try:
-            logger.info(f"Starting Appium session on {APPIUM_HOST} ...")
-            self._driver = webdriver.Remote(APPIUM_HOST, options=options)
-            logger.info("Appium session started successfully.")
-        except Exception as e:
-            logger.error(f"Appium session start failed: {e}. Attempting ADB wake recovery...")
-            self._adb.wake_screen()
-            time.sleep(2)
-            self._driver = webdriver.Remote(APPIUM_HOST, options=options)
+        # Clean start requested: Force stop Instagram before every fresh session
+        logger.info("Performing clean state reset: Force-stopping Instagram...")
+        self._adb.stop_instagram()
+        time.sleep(2)
+
+        options = UiAutomator2Options()
+        options.platform_name = "Android"
+        options.automation_name = "UiAutomator2"
+        options.app_package = INSTAGRAM_PACKAGE
+        options.app_activity = INSTAGRAM_ACTIVITY
+        options.no_reset = True
+        options.new_command_timeout = NEW_COMMAND_TIMEOUT
+        options.auto_grant_permissions = True # Keep this from original _build_options
+
+        if DEVICE_UDID:
+            options.udid = DEVICE_UDID
+            
+        # Explicitly instruct Appium server to use the host machine's ADB daemon socket
+        # (required for Dockerized Appium to see USB-attached phones on macOS)
+        # Explicitly declare the ADB binary so Appium skips the strict ANDROID_HOME folder checks
+        options.set_capability("appium:adbExecutable", "/opt/homebrew/bin/adb")
+        
+        # Self-healing loop for Appium Server Crashes
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Appium: Requesting new session on {APPIUM_HOST} (Attempt {attempt + 1}/{max_retries})")
+                self._driver = webdriver.Remote(APPIUM_HOST, options=options)
+                self._driver.implicitly_wait(10)
+                logger.info("✅ Appium session connected successfully.")
+                return
+            except WebDriverException as e: # Catch WebDriverException specifically
+                error_msg = str(e)
+                logger.error(f"Appium session initiation failed: {error_msg}")
+                if ("UiAutomation not connected" in error_msg or "SessionNotCreatedException" in error_msg) and attempt < max_retries - 1:
+                    logger.warning("♻️ Self-Healing Activated: Purging corrupted Appium UiAutomator2 background apps...")
+                    # Force stop Instagram to clear any frozen views
+                    self._adb.stop_instagram()
+                    # Uninstall the hidden apps that cause connection deadlocks
+                    self._adb._run(["uninstall", "io.appium.uiautomator2.server.test"])
+                    self._adb._run(["uninstall", "io.appium.uiautomator2.server"])
+                    self._adb._run(["uninstall", "io.appium.settings"])
+                    # Give the OS more time (6s) to release the UIAutomation hook
+                    time.sleep(6)
+                    logger.info("Retrying Appium connection...")
+                else:
+                    raise RuntimeError(f"Could not connect Appium after {max_retries} attempts.") from e
+            except Exception as e: # Catch other general exceptions
+                logger.error(f"Appium session start failed with unexpected error: {e}. Attempting ADB wake recovery...")
+                self._adb.wake_screen()
+                time.sleep(2)
+                if attempt < max_retries - 1:
+                    logger.info("Retrying Appium connection after wake recovery...")
+                else:
+                    raise RuntimeError(f"Could not connect Appium after {max_retries} attempts due to unexpected error.") from e
+
 
     def end_session(self):
         """Cleanly quit the Appium session."""
@@ -79,6 +129,8 @@ class AppiumPostingService:
                 logger.info("Appium session ended.")
 
     def _build_options(self) -> UiAutomator2Options:
+        # This method is now largely redundant as options are built in start_session
+        # Keeping it for now, but its content is no longer used by start_session
         options = UiAutomator2Options()
         options.platform_name = "Android"
         options.automation_name = "UiAutomator2"
@@ -123,7 +175,23 @@ class AppiumPostingService:
             logger.info("Step 1: Wake screen, unlock device, and ensure Instagram is in foreground.")
             self._adb.unlock_device()
             self._adb.launch_instagram()
-            time.sleep(WAIT_MEDIUM)
+            
+            # Wait for Instagram to actually be in foreground
+            max_wait = 15
+            for i in range(max_wait):
+                pkg = self._adb.get_foreground_package()
+                if pkg == INSTAGRAM_PACKAGE:
+                    logger.info(f"Instagram is in foreground after {i}s.")
+                    break
+                time.sleep(1)
+            else:
+                logger.warning("Instagram package not detected in foreground. Proceeding with caution.")
+
+            time.sleep(WAIT_SHORT)
+            # Check for 'Not Now' or common startup popups
+            if self._tap_by_text_xml("Not now", timeout=2, exact_match=False):
+                logger.info("Dismissed 'Not Now' popup.")
+                
             self._save_debug_state("01_instagram_launched")
 
             logger.info("Step 2: Tap the '+' create button.")
@@ -219,6 +287,115 @@ class AppiumPostingService:
         finally:
             self.end_session()
             logger.info("Post cancelled by human reviewer.")
+
+    # ── Cross-Platform Extensions ─────────────────────────────────────────────
+
+    def crosspost_to_tiktok(self, caption: str) -> bool:
+        """
+        Automates uploading the already-staged video to TikTok.
+        Takes advantage of the video already being topmost in the gallery.
+        """
+        self.start_session()
+        try:
+            logger.info("Starting TikTok Crosspost Flow...")
+            self._adb.launch_tiktok()
+            time.sleep(WAIT_MEDIUM)
+            
+            logger.info("Tapping TikTok Create button...")
+            if not self._tap_by_text_xml("Create", timeout=WAIT_SHORT, exact_match=False, min_y=2000):
+                self._adb.tap(720, 2900)  # Common center-bottom + coordinate
+            time.sleep(WAIT_SHORT)
+            
+            logger.info("Tapping Upload from gallery...")
+            if not self._tap_by_text_xml("Upload", timeout=WAIT_SHORT, exact_match=False):
+                self._adb.tap(1100, 2500)
+            time.sleep(WAIT_MEDIUM)
+            
+            logger.info("Selecting first topmost video in gallery...")
+            self._adb.tap(250, 500)
+            time.sleep(WAIT_SHORT)
+            
+            logger.info("Tapping Next in TikTok editor...")
+            if not self._tap_by_text_xml("Next", timeout=WAIT_SHORT):
+                self._adb.tap(1200, 2900)
+            time.sleep(WAIT_MEDIUM)
+            
+            logger.info("Pasting TikTok Caption...")
+            if self._tap_by_text_xml("Describe your post", timeout=WAIT_SHORT):
+                self._driver.set_clipboard_text(caption)
+                time.sleep(0.5)
+                self._adb._run(["shell", "input", "keyevent", "279"])
+            time.sleep(WAIT_SHORT)
+            
+            logger.info("Tapping TikTok Post...")
+            if not self._tap_by_text_xml("Post", timeout=WAIT_SHORT):
+                self._adb.tap(1200, 2900)
+                
+            logger.info("TikTok crosspost complete.")
+            return True
+        except Exception as e:
+            logger.error(f"TikTok crosspost failed: {e}")
+            return False
+        finally:
+            self.end_session()
+
+    def crosspost_to_youtube_shorts(self, caption: str) -> bool:
+        """
+        Automates uploading the already-staged video to YouTube Shorts.
+        Takes advantage of the video already being topmost in the gallery.
+        """
+        self.start_session()
+        try:
+            logger.info("Starting YouTube Shorts Crosspost Flow...")
+            self._adb.launch_youtube()
+            time.sleep(WAIT_MEDIUM)
+            
+            logger.info("Tapping YouTube Create button...")
+            if not self._tap_by_text_xml("Create", timeout=WAIT_SHORT, exact_match=False, min_y=2000):
+                self._adb.tap(720, 2900)
+            time.sleep(WAIT_SHORT)
+            
+            logger.info("Selecting 'Create a Short'...")
+            if not self._tap_by_text_xml("Create a Short", timeout=WAIT_SHORT, exact_match=False):
+                self._adb.tap(720, 2200)
+            time.sleep(WAIT_MEDIUM)
+            
+            logger.info("Opening gallery...")
+            self._adb.tap(150, 2500)
+            time.sleep(WAIT_SHORT)
+            
+            logger.info("Selecting first topmost video in gallery...")
+            self._adb.tap(250, 500)
+            time.sleep(WAIT_SHORT)
+            
+            logger.info("Tapping Done...")
+            if not self._tap_by_text_xml("Done", timeout=WAIT_SHORT):
+                self._adb.tap(1200, 2900)
+            time.sleep(WAIT_LONG)
+            
+            logger.info("Tapping Next in YouTube editor...")
+            if not self._tap_by_text_xml("Next", timeout=WAIT_SHORT):
+                self._adb.tap(1200, 150)
+            time.sleep(WAIT_MEDIUM)
+            
+            logger.info("Pasting YouTube Caption...")
+            if self._tap_by_text_xml("Caption your Short", timeout=WAIT_SHORT):
+                self._driver.set_clipboard_text(caption)
+                time.sleep(0.5)
+                self._adb._run(["shell", "input", "keyevent", "279"])
+            time.sleep(WAIT_SHORT)
+            
+            logger.info("Tapping Upload Short...")
+            if not self._tap_by_text_xml("Upload Short", timeout=WAIT_SHORT):
+                self._adb.tap(720, 2900)
+                
+            logger.info("YouTube Shorts crosspost complete.")
+            return True
+        except Exception as e:
+            logger.error(f"YouTube Shorts crosspost failed: {e}")
+            return False
+        finally:
+            self.end_session()
 
     # ── Private Helpers ───────────────────────────────────────────────────────
 
@@ -381,15 +558,21 @@ class AppiumPostingService:
         return False
 
     def _tap_element_or_coords(self, by, value, fallback_coords: tuple, timeout: int = WAIT_MEDIUM):
-        """Try Appium element find, fall back to ADB tap on coordinates."""
+        """Try Appium element find, fall back to ADB tap on coordinates if package matches."""
         try:
             el = WebDriverWait(self._driver, timeout).until(
                 EC.presence_of_element_located((by, value))
             )
             el.click()
         except (TimeoutException, NoSuchElementException):
-            logger.warning(f"Element not found [{value}] — falling back to ADB tap {fallback_coords}")
-            self._adb.tap(*fallback_coords)
+            # SAFETY CHECK: Only perform ADB tap if Instagram is actually the foreground app
+            current_pkg = self._adb.get_foreground_package()
+            if current_pkg == INSTAGRAM_PACKAGE:
+                logger.warning(f"Element not found [{value}] — falling back to ADB tap {fallback_coords}")
+                self._adb.tap(*fallback_coords)
+            else:
+                logger.error(f"Element not found [{value}] and Instagram not in foreground ({current_pkg}). Refusing to tap elsewhere.")
+                raise RuntimeError(f"Target UI element '{value}' missing and Instagram lost focus.")
 
     def _tap_next_button(self):
         """
@@ -437,18 +620,9 @@ class AppiumPostingService:
     def _enter_caption(self, caption: str):
         """
         Locate the caption AutoCompleteTextView on the Share screen and type the caption.
-
-        From recorded XML (debug/05_after_next.xml):
-          - class: android.widget.AutoCompleteTextView
-          - text:  "Write a caption and add hashtags…"
-          - bounds: [64,1578][1376,1770]  →  center: (720, 1674)
-
-        Strategy 1: Appium AutoCompleteTextView direct interaction
-        Strategy 2: XML-based tap on the placeholder text, then clipboard paste
-        Strategy 3: ADB tap at known coords (720,1674), then clipboard paste
         """
-        def _paste_via_clipboard(text: str):
-            """Set clipboard and paste using Ctrl+V or KEYCODE_PASTE."""
+        def _paste_action(text: str):
+            """Internal helper to set clipboard and trigger paste keyevent."""
             try:
                 self._driver.set_clipboard_text(text)
             except Exception:
@@ -458,14 +632,25 @@ class AppiumPostingService:
                 subprocess.run(["adb", "shell", f"am broadcast -a clipper.set -e text '{safe}'"],
                                capture_output=True)
             time.sleep(0.8)
-            # Try CTRL+V first (most reliable on Samsung)
-            self._adb._run(["shell", "input", "keyevent", "--longpress", "279"])
-            time.sleep(0.5)
-            # Also try PASTE keycode as backup
+            # Try CTRL+V/PASTE
             self._adb._run(["shell", "input", "keyevent", "279"])
             time.sleep(WAIT_SHORT)
 
+        def _finalize_entry():
+            """Standard routine to dismiss keyboard and confirm entry."""
+            logger.info("Finalizing caption entry: Dismissing keyboard and tapping OK...")
+            # Dismiss keyboard (Back button)
+            self._adb._run(["shell", "input", "keyevent", "4"])
+            time.sleep(1)
+            # Tap 'OK' (or blue checkmark) at top right
+            if not self._tap_by_text_xml("OK", timeout=WAIT_SHORT, exact_match=True, min_y=50):
+                # Fallback to known top right bounds for generic OK button
+                # Bounds usually around [1260,100][1440,250]
+                self._adb.tap(1330, 180)
+            time.sleep(WAIT_SHORT)
+
         # ── Strategy 1: Appium AutoCompleteTextView ─────────────────────────
+        success = False
         try:
             field = WebDriverWait(self._driver, WAIT_SHORT).until(
                 EC.presence_of_element_located(
@@ -475,33 +660,180 @@ class AppiumPostingService:
             )
             field.click()
             time.sleep(0.5)
-            # Use clipboard paste to support emojis
-            self._driver.set_clipboard_text(caption)
-            time.sleep(0.5)
-            self._adb._run(["shell", "input", "keyevent", "279"])  # KEYCODE_PASTE
-            time.sleep(WAIT_SHORT)
+            _paste_action(caption)
             logger.info("Caption entered via Appium (Strategy 1).")
-            self._save_debug_state("06_caption_entered")
-            return
+            success = True
         except Exception as e:
             logger.debug(f"Strategy 1 failed: {e}")
 
         # ── Strategy 2: XML tap on placeholder text ─────────────────────────
-        try:
-            if self._tap_by_text_xml("Write a caption", timeout=WAIT_SHORT, exact_match=False):
-                time.sleep(0.5)
-                _paste_via_clipboard(caption)
-                logger.info("Caption entered via XML text tap (Strategy 2).")
-                self._save_debug_state("06_caption_entered")
-                return
-        except Exception as e:
-            logger.debug(f"Strategy 2 failed: {e}")
+        if not success:
+            try:
+                if self._tap_by_text_xml("Write a caption", timeout=WAIT_SHORT, exact_match=False):
+                    time.sleep(0.5)
+                    _paste_action(caption)
+                    logger.info("Caption entered via XML text tap (Strategy 2).")
+                    success = True
+            except Exception as e:
+                logger.debug(f"Strategy 2 failed: {e}")
 
-        # ── Strategy 3: ADB tap at known coords from recorded XML ───────────
-        logger.warning("Caption field not found via Appium/XML — using known ADB coords (720,1674).")
-        self._adb.tap(720, 1674)   # AutoCompleteTextView center from Step 5 XML dump
-        time.sleep(0.8)
-        _paste_via_clipboard(caption)
-        logger.info("Caption paste attempted via ADB fallback (Strategy 3).")
-        self._save_debug_state("06_caption_entered")
+        # ── Strategy 3: ADB tap at known coords ─────────────────────────────
+        if not success:
+            logger.warning("Caption field not found via Appium/XML — using known ADB coords (720,1674).")
+            self._adb.tap(720, 1674)
+            time.sleep(0.8)
+            _paste_action(caption)
+            logger.info("Caption paste attempted via ADB fallback (Strategy 3).")
+            success = True
+
+        if success:
+            _finalize_entry()
+            self._save_debug_state("06_caption_entered")
+        else:
+            logger.error("All caption entry strategies failed.")
+
+    def grab_recent_reel_shortcode(self) -> Optional[str]:
+        """
+        Automates navigating to the user's Profile, opening the most recent Reel,
+        and copying its link to extract the resulting shortcode.
+        
+        Flow (confirmed from gesture_test XML analysis):
+          1. Profile tab
+          2. Reels tab on profile
+          3. Tap first (most recent) reel
+          4. Tap "Send post" share button (NOT "More actions" — "Copy link"
+             is not in the More Actions menu for your OWN posts)
+          5. Tap "Copy link" in the share sheet
+          6. Extract shortcode from clipboard
+        
+        This is necessary for ROI tracking in Closed-Cycle Analysis.
+        """
+        self.start_session()
+        try:
+            logger.info("Starting Shortcode Extraction Flow...")
+            self._adb.unlock_device()
+            self._adb.launch_instagram()
+            time.sleep(WAIT_MEDIUM)
+            
+            # ── Step 1: Navigate to Profile Tab ──────────────────────────────
+            logger.info("Step 1: Navigate to Profile Tab")
+            # Bounds [963,2657][1432,3060] -> Safe center (1300, 2850)
+            if not self._tap_by_text_xml("Profile", timeout=WAIT_SHORT, exact_match=False):
+                logger.warning("Profile tab not found via XML. Tapping coordinate (1300, 2850).")
+                self._adb.tap(1300, 2850)
+            time.sleep(WAIT_MEDIUM)
+            self._save_debug_state("shortcode_01_profile")
+            
+            # ── Step 2: Navigate to Reels Tab on Profile ─────────────────────
+            logger.info("Step 2: Navigate to Reels Tab on Profile")
+            # From copy_link recording: Reels tab at [360,2143][720,2335] -> (540, 2239)
+            # resource-id: profile_tab_icon_view
+            if not self._tap_by_text_xml("Reels", timeout=WAIT_SHORT, exact_match=False):
+                logger.warning("Reels tab not found via XML. Tapping coordinate (540, 2239).")
+                self._adb.tap(540, 2239)
+            time.sleep(WAIT_MEDIUM)
+            self._save_debug_state("shortcode_02_reels_tab")
+            
+            # ── Step 3: Tap the most recent Reel ─────────────────────────────
+            logger.info("Step 3: Tap the most recent Reel")
+            # From copy_link recording: first reel at [0,2337][479,2868] -> (240, 2602)
+            # content-desc: "Reel by t.ptrending at row 1, column 1"
+            self._adb.tap(240, 2602)
+            time.sleep(WAIT_LONG)
+            self._save_debug_state("shortcode_03_reel_open")
+            
+            # ── Step 4: Tap "Send post" share button ─────────────────────────
+            # CRITICAL: For your OWN posts, "Copy link" is NOT in the More Actions
+            # menu. It's only accessible via the Share sheet.
+            # From copy_link recording: Send post at [583,1356][679,1540] -> (631, 1448)
+            # resource-id: com.instagram.android:id/row_feed_button_share
+            logger.info("Step 4: Tap 'Send post' share button")
+            if not self._tap_by_text_xml("Send post", timeout=WAIT_SHORT, exact_match=False):
+                logger.warning("'Send post' not found via XML. Tapping coordinate (631, 1448).")
+                self._adb.tap(631, 1448)
+            time.sleep(WAIT_MEDIUM)
+            self._save_debug_state("shortcode_04_share_sheet")
+            
+            # ── Step 5: Tap "Copy link" in the share sheet ───────────────────
+            logger.info("Step 5: Tap 'Copy link' in share sheet")
+            if not self._tap_by_text_xml("Copy link", timeout=WAIT_MEDIUM, exact_match=False):
+                # Fallback: "Copy link" is typically in the top row of the share sheet
+                # If not visible, try scrolling the share sheet up first
+                logger.warning("'Copy link' not found via XML. Trying scroll then retry...")
+                self._adb.swipe(720, 2400, 720, 1800, duration_ms=300)
+                time.sleep(2)
+                if not self._tap_by_text_xml("Copy link", timeout=WAIT_SHORT, exact_match=False):
+                    logger.warning("'Copy link' still not found. Tapping fallback coordinate.")
+                    self._adb.tap(179, 2930)
+            time.sleep(WAIT_MEDIUM)
+            self._save_debug_state("shortcode_05_link_copied")
+            
+            # ── Step 6: Extract link from clipboard ──────────────────────────
+            logger.info("Step 6: Extract link from clipboard")
+            shortcode = self._extract_shortcode_from_clipboard()
+            
+            if shortcode:
+                logger.info(f"✅ Successfully extracted shortcode: {shortcode}")
+            else:
+                logger.warning("Shortcode extraction failed. Check debug dumps.")
+                self._save_debug_state("shortcode_06_FAILED")
+            
+            return shortcode
+                 
+        except Exception as e:
+            logger.error(f"Shortcode extraction failed: {e}")
+            self._save_debug_state("shortcode_ERROR")
+            return None
+        finally:
+            self.end_session()
+
+    def _extract_shortcode_from_clipboard(self) -> Optional[str]:
+        """
+        Reads the Android clipboard and extracts an Instagram reel shortcode.
+        
+        Tries two methods:
+          1. `service call clipboard 2` (lower-level, works on most devices)
+          2. `am broadcast` with clipper app (if installed)
+        
+        Returns the shortcode string or None.
+        """
+        # Method 1: service call clipboard
+        ret_code, stdout, stderr = self._adb._run(
+            ["shell", "service", "call", "clipboard", "2"]
+        )
+        clipboard_text = ""
+        
+        if ret_code == 0 and stdout:
+            try:
+                for line in stdout.strip().splitlines():
+                    if "'" in line:
+                        clipboard_text += line.split("'")[1]
+            except Exception as e:
+                logger.debug(f"Clipboard parsing (method 1) error: {e}")
+        
+        # Method 2: Try dumping via content provider (fallback)
+        if not clipboard_text:
+            ret_code2, stdout2, _ = self._adb._run(
+                ["shell", "content", "call", "--uri", "content://clipboard/text",
+                 "--method", "getText"]
+            )
+            if ret_code2 == 0 and stdout2:
+                clipboard_text = stdout2.strip()
+        
+        if not clipboard_text:
+            logger.warning("Could not read clipboard from device.")
+            return None
+        
+        logger.debug(f"Clipboard content: {clipboard_text[:200]}")
+        
+        # Extract shortcode from Instagram URL patterns:
+        # https://www.instagram.com/reel/ABC123/
+        # https://www.instagram.com/p/ABC123/
+        match = re.search(r'/(?:reel|p)/([A-Za-z0-9_-]+)/?', clipboard_text)
+        if match:
+            return match.group(1)
+        
+        logger.warning(f"No shortcode found in clipboard: {clipboard_text[:100]}")
+        return None
+
 

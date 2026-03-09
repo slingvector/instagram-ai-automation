@@ -1,6 +1,7 @@
 import subprocess
 import logging
 import time
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +91,50 @@ class ADBClient:
         ])
         logger.info(f"Launched {package} via monkey.")
 
+    def get_foreground_package(self) -> str:
+        """Determines the package name of the application currently in the foreground."""
+        # Method 1: dumpsys window (common for newer Android)
+        _, stdout, _ = self._run(["shell", "dumpsys", "window", "|", "grep", "-E", "'mCurrentFocus|mFocusedApp'"])
+        if stdout:
+            # Typical output: mCurrentFocus=Window{... u0 com.instagram.android/com.instagram.mainactivity.MainActivity}
+            # Or: mFocusedApp=AppWindowToken{... token=Token{... com.instagram.android/com.instagram.mainactivity.MainActivity}}
+            match = re.search(r'([a-zA-Z0-9._]+)/', stdout)
+            if match:
+                pkg = match.group(1)
+                # If there's leading junk before the package (common in some dumps), strip it
+                if " " in pkg:
+                    pkg = pkg.split(" ")[-1]
+                return pkg
+
+        # Method 2: dumpsys activity recents (fallback)
+        _, stdout, _ = self._run(["shell", "dumpsys", "activity", "recents", "|", "grep", "'Recent #0'"])
+        if stdout:
+            match = re.search(r'A=([a-zA-Z0-9._]+)', stdout)
+            if match:
+                return match.group(1)
+
+        return ""
+
     def stop_instagram(self, package: str = "com.instagram.android"):
         """Force stop Instagram to start clean."""
         self._run(["shell", "am", "force-stop", package])
         logger.info(f"Force-stopped {package}.")
+
+    def launch_tiktok(self, package: str = "com.zhiliaoapp.musically"):
+        """Launch TikTok using Android monkey — most reliable cold-start method."""
+        self._run([
+            "shell", "monkey", "-p", package,
+            "-c", "android.intent.category.LAUNCHER", "1"
+        ])
+        logger.info(f"Launched {package} via monkey.")
+
+    def launch_youtube(self, package: str = "com.google.android.youtube"):
+        """Launch YouTube using Android monkey — most reliable cold-start method."""
+        self._run([
+            "shell", "monkey", "-p", package,
+            "-c", "android.intent.category.LAUNCHER", "1"
+        ])
+        logger.info(f"Launched {package} via monkey.")
 
     def tap(self, x: int, y: int):
         """Tap at absolute screen coordinates."""
