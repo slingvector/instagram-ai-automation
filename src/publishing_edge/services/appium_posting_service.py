@@ -150,6 +150,46 @@ class AppiumPostingService:
             options.udid = DEVICE_UDID
         return options
 
+    def _reset_to_home(self):
+        """
+        Presses the Android BACK key repeatedly until the Instagram bottom tab bar is visible,
+        then explicitly taps the Feed (Home) tab to ensure a clean starting state.
+        This handles cases where the OS resurrects a saved activity (like an open Reel).
+        """
+        logger.info("Resetting Instagram to Home tab to clear any open overlays or Reels...")
+        for i in range(5):
+            src = self._driver.page_source
+            if src and "com.instagram.android:id/tab_bar" in src:
+                logger.info("Bottom tab bar found. Ensuring Home tab is active...")
+                
+                # Check if we can tap the home tab directly via resource-id
+                home_tab_id = "com.instagram.android:id/feed_tab"
+                if home_tab_id in src:
+                    xml_root = ET.fromstring(src.encode('utf-8'))
+                    for node in xml_root.iter():
+                        if node.attrib.get('resource-id') == home_tab_id:
+                            bounds_str = node.attrib.get('bounds')
+                            if bounds_str:
+                                import re
+                                m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds_str)
+                                if m:
+                                    x1, y1, x2, y2 = map(int, m.groups())
+                                    self._adb.tap((x1 + x2) // 2, (y1 + y2) // 2)
+                                    time.sleep(WAIT_SHORT)
+                                    return
+                    
+                # Fallback if XML interaction fails
+                # Known center for Home tab [0,2868][288,3060] -> (144, 2964)
+                self._adb.tap(144, 2964)
+                time.sleep(WAIT_SHORT)
+                return
+                
+            logger.info(f"Tab bar not found (Attempt {i+1}/5). Pressing BACK key...")
+            self._adb._run(["shell", "input", "keyevent", "KEYCODE_BACK"])
+            time.sleep(WAIT_SHORT)
+            
+        logger.warning("Could not find bottom tab bar after multiple BACK presses. Proceeding with caution.")
+
     # ── Core Posting Flow ─────────────────────────────────────────────────────
 
     def prepare_reel_post(self, video_device_path: str, caption: str, needs_audio: bool = False) -> bool:
@@ -192,16 +232,23 @@ class AppiumPostingService:
             if self._tap_by_text_xml("Not now", timeout=2, exact_match=False):
                 logger.info("Dismissed 'Not Now' popup.")
                 
+            self._reset_to_home()
             self._save_debug_state("01_instagram_launched")
 
-            logger.info("Step 2: Tap the '+' create button.")
+            logger.info("Step 2: Navigate to Profile and tap 'Create New'")
+            if not self._tap_bottom_tab("Profile", timeout=WAIT_SHORT):
+                logger.warning("Profile tab not found via resource-id. Tapping fallback coordinate (1300, 2850).")
+                self._adb.tap(1300, 2850)
+            time.sleep(WAIT_MEDIUM)
+            self._save_debug_state("02a_profile_tab")
+
             self._tap_element_or_coords(
                 by=AppiumBy.ACCESSIBILITY_ID,
-                value="New post",
-                fallback_coords=(96, 225),  # top-left corner for new IG layouts
+                value="Create New",
+                fallback_coords=(96, 225),  # top-left corner on profile tab
             )
             time.sleep(WAIT_MEDIUM)
-            self._save_debug_state("02_after_create_tap")
+            self._save_debug_state("02b_after_create_tap")
 
             logger.info("Step 3: Ensure we are on the Reel gallery screen.")
             src = self._driver.page_source
@@ -763,6 +810,8 @@ class AppiumPostingService:
             self._adb.unlock_device()
             self._adb.launch_instagram()
             time.sleep(WAIT_MEDIUM)
+            
+            self._reset_to_home()
             
             # ── Step 1: Navigate to Profile Tab ──────────────────────────────
             logger.info("Step 1: Navigate to Profile Tab")
