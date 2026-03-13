@@ -1,66 +1,211 @@
 # config/trending_sources.yaml
 
-# Configuration for UC3: Real-Time Trending Monitor
-# Centralizes viral trends from multi-platform sources to generate reaction or text-card Reels.
+# Configuration for UC3: Real-Time Trending Monitor (SCALED FOR MILESTONE 11 - CONSOLIDATED GLOBAL + REGIONAL)
+# REFACTORED: Consolidates previous supply chain with new international hubs.
 
 sources:
-  telegram_channels:
-    # Major OSINT and breaking news Telegram channels
-    - "intelslava"
-    - "geopolitics_live"
-    - "bellestriker"
-    - "liveuamap"
-    - "atlas_news"
-    
   instagram_pages:
-    # Influential IG pages focusing on geopolitics and news
-    - "atlas.news"
-    - "geopoliticalfutures"
-    - "the.intel.drop"
-    - "modern_combat_history"
-    - "the_war_diaries"
+    - username: "espn"
+      follower_baseline: 25000000
+    - username: "bleacherreport"
+      follower_baseline: 20000000
+    - username: "433"
+      follower_baseline: 70000000
+    - username: "houseofhighlights"
+      follower_baseline: 50000000
+    - username: "espnmumbai"
+      follower_baseline: 1500000
+    - username: "cricketcomau"
+      follower_baseline: 2000000
+    - username: "bwf.official"
+      follower_baseline: 1100000
+    - username: "volleyballworld"
+      follower_baseline: 5000000
+    - username: "forbes"
+      follower_baseline: 6000000
+    - username: "voguemagazine"
+      follower_baseline: 48000000
+    - username: "natgeotravel"
+      follower_baseline: 47000000
+    - username: "businessinsider"
+      follower_baseline: 3000000
+    - username: "bloombergbusiness"
+      follower_baseline: 3000000
+    - username: "cnbc"
+      follower_baseline: 1500000
+    - username: "wsj"
+      follower_baseline: 4500000
+    - username: "huggingface"
+      follower_baseline: 150000
+    - username: "nvidiaai"
+      follower_baseline: 250000
+    - username: "techcrunch"
+      follower_baseline: 1500000
+    - username: "theverge"
+      follower_baseline: 3500000
+    - username: "wired"
+      follower_baseline: 1800000
+    - username: "cnet"
+      follower_baseline: 1200000
+    - username: "engadget"
+      follower_baseline: 1500000
+    - username: "gizmodo"
+      follower_baseline: 1200000
+    - username: "natgeo"
+      follower_baseline: 280000000
+    - username: "discovery"
+      follower_baseline: 20000000
+    - username: "history"
+      follower_baseline: 8000000
+    - username: "smithsonian"
+      follower_baseline: 3000000
+    - username: "nasa"
+      follower_baseline: 97000000
+    - username: "spacex"
+      follower_baseline: 15000000
+    - username: "tesla"
+      follower_baseline: 9000000
+    - username: "ferrari"
+      follower_baseline: 28000000
+    - username: "lamborghini"
+      follower_baseline: 35000000
+    - username: "porsche"
+      follower_baseline: 30000000
+    - username: "mercedesbenz"
+      follower_baseline: 38000000
+    - username: "bmw"
+      follower_baseline: 35000000
+    - username: "audi"
+      follower_baseline: 16000000
+    - username: "redbull"
+      follower_baseline: 20000000
+    - username: "gopro"
+      follower_baseline: 20000000
+    - username: "nike"
+      follower_baseline: 300000000
+    - username: "adidas"
+      follower_baseline: 28000000
+    - username: "puma"
+      follower_baseline: 12000000
+    - username: "underarmour"
+      follower_baseline: 8000000
+    - username: "lululemon"
+      follower_baseline: 5000000
 
   reddit:
-    # Subreddits to monitor for viral geopolitical/conflict content
     - "worldnews"
-    - "combatfootage"
-    - "geopolitics"
-    - "defense"
-    - "energy"
-    - "history"
-    - "internationalpolitics"
-    - "credibledefense"
-    - "lesscredibledefense"
-    - "military"
-    
+    - "technology"
+    - "artificial"
+    - "singularity"
+    - "stocks"
+    - "investing"
+    - "wallstreetbets"
+    - "travel"
+    - "TravelHacks"
+    - "fashion"
+    - "MakeupAddiction"
+    - "nba"
+    - "nfl"
+    - "soccer"
+    - "formula1"
+    - "Cricket"
+    - "badminton"
+    - "volleyball"
+    - "tech"
+    - "fintech"
+
   youtube_channels:
-    # Specific influential YouTube channel IDs for geopolitics
-    - "UCs5A9aLndmU8sB9t22rKk5A" # Example: Stratfor
-    - "UCpwvZwUam-URQ9sE7zGEe2w" # Example: Zeihan on Geopolitics
-    - "UC1yBKRuGpC1tSM73A0lA1Bw" # Example: Breaking Points
-    - "UCLwBr9ZfXF1WbZ59wO9Gog"  # Example: Defense News
-    
+    # GLOBAL & REGIONAL HUB CHANNELS
+    - channel_id: "UCV6KDgJskWZ1JWBCUCQskpA" # Graham Stephan (Finance)
+    - channel_id: "UC_kG2_8F0NfU_B_A9A_M_oA" # Meet Kevin (Finance)
+    - channel_id: "UCqcbQf6yw5KzRoDDcZ_wBSw" # Wes Roth (AI)
+    - channel_id: "UC9pHowXN4LInY9fP5fU5pA" # Matt Wolfe (AI)
+    - channel_id: "UC9-y-6c63fS_L7_S5-p8JvA" # AI Explained
+    - channel_id: "UC80PWRj_WCjG6qi690Gf6pA" # Fireship (Tech)
+    - channel_id: "UC0e3Qh4NxqWIkvduBV8p_A" # Two Minute Papers (AI)
+    - channel_id: "UClG8rb_vAmzLllT8WqG_Ltg" # Vogue (Fashion)
+    - channel_id: "UC4ijq8Cg-8zQKx8OH12dUSw" # Kara and Nate (Travel)
+    - channel_id: "UCyEd6QBSgat5kkC6svyjudA" # Mark Wiens (Travel)
+    - channel_id: "UC8S2z6T5iK9fN8vV5p5mX8g" # ICC (Cricket)
+    - channel_id: "UCANnKscP99Nn5Vv25oJ0q_A" # BCCI (Cricket)
+    - channel_id: "UCInTf2u3_vXqYqG8AInR7pA" # BWF TV (Badminton)
+    - channel_id: "UC3mP7jY9DEnG_p_6S9v-Ljw" # Volleyball World
+    - channel_id: "UCbfP1z1M5m9G95R5X1vL8rA" # NatGeo
+    - channel_id: "UCu_gCqR14P3r55aPZ-G1zWg" # Andrej Karpathy
+    - channel_id: "UC7_gcs09iThXybpVgjHZ_7g" # ColdFusion
+    - channel_id: "UCCl0fM_iUos7fW-LtgWzWyw" # Ankur Warikoo
+    - channel_id: "UClG8rb_vAmzLllT8WqG_Ltg" # Vogue
+    - channel_id: "UC80PWRj_WCjG6qi690Gf6pA" # Fireship
+    - channel_id: "UC0e3Qh4NxqWIkvduBV8p_A" # Two Minute Papers
+    - channel_id: "UC_u6pS_8_0_0_0_0"        # Wes Roth
+    - channel_id: "UCV6KDgJskWZ1JWBCUCQskpA" # Graham Stephan
+    - channel_id: "UC_kG2_8F0NfU_B_A9A_M_oA" # Meet Kevin
+    - channel_id: "UCyEd6QBSgat5kkC6svyjudA" # Mark Wiens
+    - channel_id: "UC4ijq8Cg-8zQKx8OH12dUSw" # Kara and Nate
+    - channel_id: "UC7_gcs09iThXybpVgjHZ_7g" # ColdFusion
+    - channel_id: "UC66D8E_T6pC_66_z_O"        # Minority Mindset
+    - channel_id: "UCu_gCqR14P3r55aPZ-G1zWg" # Andrej Karpathy
+    - channel_id: "UCbfP1z1M5m9G95R5X1vL8rA" # Two Minute Papers (alternate)
+    - channel_id: "UCCl0fM_iUos7fW-LtgWzWyw" # Asset Yogi
+
   search_terms:
-    # High-volume SEO keywords for searching recent content on all platforms
-    - "iran israel conflict"
-    - "america middle east policy"
-    - "warzone combat footage"
-    - "defense tech future"
-    - "multipolar world order"
-    - "energy security"
-    - "historical world wars"
-    
+    # GLOBAL AI & TECH
+    - "AI news today global 2026"
+    - "ChatGPT-5 release rumors"
+    - "OpenAI Sora latest examples"
+    - "NVIDIA Blackwell performance"
+    - "Silicon Valley tech trends 2026"
+    - "robotics breakthrough 2026"
+    - "AI video creation workflow"
+    - "Cursor AI pro tips"
+    - "Midjourney v7 cinematic"
+    # GLOBAL FINANCE
+    - "US stock market today live"
+    - "Federal Reserve interest rate news"
+    - "Global economy 2026 forecast"
+    - "Bitcoin price prediction global"
+    - "Wall Street highlights today"
+    - "stock market today viral"
+    - "fintech trends india"
+    - "trading floor intensity"
+    # GLOBAL SPORTS
+    - "Champions League highlights 2026"
+    - "NBA top plays today"
+    - "NFL viral touchdown reels"
+    - "Formula 1 race recap 2026"
+    - "Tennis Grand Slam highlights"
+    - "cricket amazing catches"
+    - "ipl 2026 highlights"
+    - "badminton smash compilation"
+    - "volleyball spike highlights"
+    # GLOBAL TRAVEL & LIFESTYLE
+    - "best places to travel 2026 global"
+    - "luxury travel destinations 2026"
+    - "fashion week milan paris 2026"
+    - "skincare routine for global skin types"
+    - "hidden gems travel reels"
+    - "minimalist fashion trends"
+
   hashtags:
-    - "#geopolitics"
-    - "#middleeastconflict"
-    - "#defensetech"
-    - "#energysecurity"
-    - "#globalconflict"
+    - "#globalnews"
+    - "#techtrends"
+    - "#ainews"
+    - "#stockmarketglobal"
+    - "#traveldestinations"
+    - "#fashion2026"
+    - "#sportsreels"
+    - "#ipl2026"
+    - "#cricketfans"
 
   rss:
-    - "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"
-    - "http://feeds.bbci.co.uk/news/world/middle_east/rss.xml" # Targeted to ME
-    - "https://mwi.westpoint.edu/feed/" # Modern War Institute at West Point
-    
+    - "https://www.reuters.com/arc/outboundfeeds/news-handler/?outputType=xml" # Reuters Global
+    - "https://feeds.a.dj.com/rss/RSSWorldNews.xml" # WSJ World News
+    - "https://techcrunch.com/feed/" # TechCrunch Global
+    - "https://the-decoder.com/feed/" # AI News Global
+    - "https://www.espn.com/espn/rss/news" # ESPN Global
+    - "https://trends.google.com/trends/trendingsearches/daily/rss?geo=IN"
+    - "https://www.espncricinfo.com/rss/content/story/feeds/0.xml"
+
 filters:
-  reddit_min_upvotes: 20000
+  reddit_min_upvotes: 5000
+  min_views: 100000

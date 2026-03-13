@@ -17,8 +17,16 @@ from selenium.common.exceptions import TimeoutException, InvalidSessionIdExcepti
 from src.publishing_edge.services.adb_client import ADBClient
 from src.publishing_edge.config import (
     APPIUM_HOST, DEVICE_UDID, INSTAGRAM_PACKAGE,
-    INSTAGRAM_ACTIVITY, NEW_COMMAND_TIMEOUT
+    INSTAGRAM_ACTIVITY, NEW_COMMAND_TIMEOUT, ANDROID_HOME
 )
+
+# Hardward Environment Persistence: Ensure Appium client process has SDK paths
+if ANDROID_HOME:
+    os.environ["ANDROID_HOME"] = ANDROID_HOME
+    # Also ensure its platform-tools are in the path for adb calls
+    platform_tools = os.path.join(ANDROID_HOME, "platform-tools")
+    if platform_tools not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = f"{platform_tools}{os.pathsep}{os.environ.get('PATH', '')}"
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +81,9 @@ class AppiumPostingService:
         options.no_reset = True
         options.new_command_timeout = NEW_COMMAND_TIMEOUT
         options.auto_grant_permissions = True # Keep this from original _build_options
+        
+        # Instruct Appium server to drop any stale port configurations and logs before reconnecting
+        options.set_capability("appium:clearSystemFiles", True)
 
         if DEVICE_UDID:
             options.udid = DEVICE_UDID
@@ -82,7 +93,7 @@ class AppiumPostingService:
         # Explicitly declare the ADB binary so Appium skips the strict ANDROID_HOME folder checks
         options.set_capability("appium:adbExecutable", "/opt/homebrew/bin/adb")
         
-        # Self-healing loop for Appium Server Crashes
+        # Connection loop for Appium Server
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -91,23 +102,38 @@ class AppiumPostingService:
                 self._driver.implicitly_wait(10)
                 logger.info("✅ Appium session connected successfully.")
                 return
-            except WebDriverException as e: # Catch WebDriverException specifically
+            except WebDriverException as e: 
                 error_msg = str(e)
                 logger.error(f"Appium session initiation failed: {error_msg}")
-                if ("UiAutomation not connected" in error_msg or "SessionNotCreatedException" in error_msg) and attempt < max_retries - 1:
-                    logger.warning("♻️ Self-Healing Activated: Purging corrupted Appium UiAutomator2 background apps...")
-                    # Force stop Instagram to clear any frozen views
-                    self._adb.stop_instagram()
-                    # Uninstall the hidden apps that cause connection deadlocks
-                    self._adb._run(["uninstall", "io.appium.uiautomator2.server.test"])
-                    self._adb._run(["uninstall", "io.appium.uiautomator2.server"])
-                    self._adb._run(["uninstall", "io.appium.settings"])
-                    # Give the OS more time (6s) to release the UIAutomation hook
-                    time.sleep(6)
+                
+                # If it was a connection refused, warn that the server might be completely down
+                if "Connection refused" in error_msg or "Failed to establish a new connection" in error_msg:
+                    logger.error("🛑 Appium Server seems DOWN or Unreachable. Please ensure 'appium' is running on the host.")
+                
+                # Check for "UiAutomation not connected" or generic connection refused
+                is_connection_refused = "Connection refused" in error_msg or "Failed to establish a new connection" in error_msg
+                is_stale_package = "UiAutomation not connected" in error_msg or "SessionNotCreatedException" in error_msg
+                
+                if (is_connection_refused or is_stale_package) and attempt < max_retries - 1:
+                    logger.warning("♻️ Appium Connection Deadlock Detected: Force-stopping orphaned UiAutomator2 servers from device RAM...")
+                    self._adb._run(["shell", "am", "force-stop", "io.appium.uiautomator2.server"])
+                    self._adb._run(["shell", "am", "force-stop", "io.appium.uiautomator2.server.test"])
+                    time.sleep(4)
                     logger.info("Retrying Appium connection...")
+                elif "io.appium.settings" in error_msg and attempt < max_retries - 1:
+                    logger.warning("🚨 Appium Settings Activity Missing! Triggering DEEP CLEAN protocol...")
+                    # Completely purge suspected corrupted helper apps
+                    self._adb._run(["uninstall", "io.appium.settings"])
+                    self._adb._run(["uninstall", "io.appium.uiautomator2.server"])
+                    self._adb._run(["uninstall", "io.appium.uiautomator2.server.test"])
+                    logger.info("Helper apps uninstalled. Appium will re-install them clean on next attempt.")
+                    time.sleep(5)
+                elif attempt < max_retries - 1:
+                    logger.info("Retrying Appium connection in 5s...")
+                    time.sleep(5)
                 else:
                     raise RuntimeError(f"Could not connect Appium after {max_retries} attempts.") from e
-            except Exception as e: # Catch other general exceptions
+            except Exception as e: 
                 logger.error(f"Appium session start failed with unexpected error: {e}. Attempting ADB wake recovery...")
                 self._adb.wake_screen()
                 time.sleep(2)
@@ -298,6 +324,7 @@ class AppiumPostingService:
         except Exception as e:
             screenshot = self._adb.get_screenshot("/tmp/mcr_error_screen.png")
             logger.error(f"Error staging Reel draft: {e}. Screenshot: {screenshot}")
+            self.end_session()
             raise RuntimeError(f"Failed to stage Reel: {e}") from e
 
     def share_post(self) -> bool:

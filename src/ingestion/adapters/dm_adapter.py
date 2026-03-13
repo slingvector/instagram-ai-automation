@@ -78,9 +78,32 @@ class DMAdapter(SourceAdapter):
         items: List[ContentItem] = []
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=self.headless)
-            context = self._make_context(browser, p)
-            page = context.new_page()
+            persistent_dir = Path("data/browser_session")
+            persistent_dir.mkdir(parents=True, exist_ok=True)
+            
+            context_kwargs = {
+                "user_agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                ),
+                "viewport": {"width": 1280, "height": 800},
+                "locale": "en-US",
+                "device_scale_factor": 2,
+                "headless": self.headless,
+            }
+            
+            use_proxy = os.environ.get("USE_PROXY_FOR_INGESTION", "false").lower() == "true"
+            proxy_url = os.environ.get("PROXY_SERVER")
+            
+            if use_proxy and proxy_url:
+                context_kwargs["proxy"] = {"server": proxy_url}
+
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=str(persistent_dir),
+                **context_kwargs
+            )
+            
+            page = context.pages[0] if context.pages else context.new_page()
 
             # Attach browser debug listeners
             page.on("console", lambda msg: logger.debug(f"BROWSER CONSOLE [{msg.type}]: {msg.text}"))
@@ -120,39 +143,11 @@ class DMAdapter(SourceAdapter):
             except Exception as e:
                 logger.error(f"DM scraping failed: {e}")
             finally:
-                # Save updated session cookies
-                try:
-                    context.storage_state(path=str(self.session_file))
-                except Exception as e:
-                    logger.debug(f"Could not save storage state (maybe browser closed): {e}")
-                browser.close()
+                context.close()
 
         return items
 
     # ── Session & login ───────────────────────────────────────────────────────
-
-    def _make_context(self, browser, p):
-        """Create a stealth browser context, loading saved session if available."""
-        context_kwargs = {
-            "user_agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            ),
-            "viewport": {"width": 1280, "height": 800},
-            "locale": "en-US",
-            "device_scale_factor": 2,
-        }
-        
-        use_proxy = os.environ.get("USE_PROXY_FOR_INGESTION", "false").lower() == "true"
-        proxy_url = os.environ.get("PROXY_SERVER")
-        
-        if use_proxy and proxy_url:
-            context_kwargs["proxy"] = {"server": proxy_url}
-            
-        if self.session_file.exists():
-            context_kwargs["storage_state"] = str(self.session_file)
-
-        return browser.new_context(**context_kwargs)
 
     def _login(self, page) -> None:
         """Login to Instagram if not already authenticated via saved session."""

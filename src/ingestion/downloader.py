@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from src.utils.yt_dlp_helper import get_yt_dlp_command
 
 logger = logging.getLogger(__name__)
 
@@ -173,9 +174,6 @@ class UniversalDownloader:
             return DownloadResult(success=False, error=str(e))
 
     def _base_cmd(self) -> list[str]:
-        cmd = ["yt-dlp"]
-        if self.proxy:
-            cmd += ["--proxy", self.proxy]
-        if self.cookies_file and self.cookies_file.exists():
-            cmd += ["--cookies", str(self.cookies_file)]
-        return cmd
+        # We start with a minimal cmd and let the helper wrap it with 
+        # formats, proxies, and cookies.
+        return get_yt_dlp_command(["yt-dlp"], proxy=self.proxy)

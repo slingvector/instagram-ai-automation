@@ -1,32 +1,44 @@
 # config/cross_platform.yaml
 
 # Map of platform -> niches -> target accounts/hashtags/queries
-# Used by UC4 (Cross-Platform Adapter) to find viral content outside of Instagram
-
-# TikTok removed due to regional restrictions (India)
+# Used by UC4 (Cross-Platform Adapter) to find viral content outside of Instagram.
+# REFACTORED for Milestone 10: Performance Scaling.
 
 youtube_shorts:
-  sport:
+  sports:
     - "ESPN" 
     - "House of Highlights"
-  entertainment:
-    - "MrBeast"
-    - "Dude Perfect"
+    - "ICC"
+    - "BWF TV"
+    - "Volleyball World"
+  ai_tech:
+    - "Matt Wolfe"
+    - "AI Explained"
+    - "Fireship"
+  finance:
+    - "Graham Stephan"
+    - "Andrei Jikh"
   fashion:
+    - "Vogue"
     - "Wisdm"
   travel:
     - "Beautiful Destinations"
+    - "Kara and Nate"
 
 snapchat_spotlight:
-  fun:
-    - "meme_central"
-    - "daily_laughs"
-
-telegram:
-  explicit:
-    - "t.me/nsfw_example_channel" 
+  travel:
+    - "travel_vibes"
+  fashion:
+    - "fashion_forward"
 
 twitter:
-  sport:
+  sports:
     - "BleacherReport"
     - "espn"
+    - "ICC"
+  ai_news:
+    - "rowancheung"
+    - "bindureddy"
+  finance:
+    - "unusual_whales"
+    - "WatcherGuru"

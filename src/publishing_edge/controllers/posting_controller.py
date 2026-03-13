@@ -58,7 +58,13 @@ class PostingController:
         ai_meta = data.get("ai_metadata", {})
         caption = ai_meta.get("caption", "")
         hashtags = ai_meta.get("hashtags", [])
-        full_caption = f"{caption}\n\n{' '.join(hashtags)}" if hashtags else caption
+        # Ensure all hashtags start with '#'
+        formatted_hashtags = [h if h.startswith("#") else f"#{h}" for h in hashtags]
+        full_caption = f"{caption}\n\n{' '.join(formatted_hashtags)}" if formatted_hashtags else caption
+        
+        tx_hash = data.get("digital_passport_tx_hash")
+        if tx_hash:
+            full_caption += f"\n\n🔗 Immutable Web3 Passport: {tx_hash}"
         
         # Audio muted flag set by the Downloader
         audio_muted = data.get("audio_muted", False)
@@ -108,6 +114,7 @@ class PostingController:
                         "posted_at": firestore.SERVER_TIMESTAMP,
                     })
                     logger.info(f"[{job_id}] ✅ Posted to Instagram.")
+                    self._extract_and_save_shortcode(job_ref, job_id)
                     return True
 
                 elif decision == "REJECTED":
@@ -136,6 +143,7 @@ class PostingController:
                     "posted_at": firestore.SERVER_TIMESTAMP,
                 })
                 logger.info(f"[{job_id}] ✅ Auto-posted to Instagram.")
+                self._extract_and_save_shortcode(job_ref, job_id)
                 return True
 
         except Exception as e:
@@ -190,3 +198,31 @@ class PostingController:
             logger.debug(f"Waiting for review... current status: {status}")
             time.sleep(REVIEW_POLL_INTERVAL)
         return "timeout"
+
+    def _extract_and_save_shortcode(self, job_ref, job_id: str):
+        """
+        Waits for the reel to finish uploading, extracts the shortcode, and saves it to Firestore.
+        Implements a 30-second delay before force-closing Instagram as requested.
+        """
+        logger.info(f"[{job_id}] Waiting 30s for Meta to finalize Reel upload before extraction...")
+        time.sleep(30)
+        
+        try:
+            logger.info(f"[{job_id}] Extracting shortcode...")
+            shortcode = self.appium.grab_recent_reel_shortcode()
+            if shortcode:
+                # Update Firestore document with the extracted shortcode and link
+                job_ref.update({
+                    "instagram_shortcode": shortcode,
+                    "instagram_url": f"https://www.instagram.com/reel/{shortcode}/"
+                })
+                logger.info(f"[{job_id}] ✅ Saved shortcode {shortcode} to Firestore.")
+            else:
+                logger.warning(f"[{job_id}] ❌ Failed to extract shortcode.")
+        except Exception as e:
+            logger.error(f"[{job_id}] Error during shortcode extraction: {e}")
+        finally:
+            logger.info(f"[{job_id}] Waiting 30s before closing Instagram app as requested...")
+            time.sleep(30)
+            self.appium.end_session()
+            self.adb.stop_instagram()

@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from google.cloud import storage
+from src.utils.yt_dlp_helper import get_yt_dlp_command
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +15,9 @@ class GCSUploaderService:
     Returns the gs:// URI of the uploaded file.
     """
 
-    def __init__(self, bucket_name: str, credentials_path: str = None):
+    def __init__(self, bucket_name: str, credentials_path: str = None, proxy: str = None):
         self.bucket_name = bucket_name
+        self.proxy = proxy
         if credentials_path:
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
         self.client = storage.Client()
@@ -34,23 +36,34 @@ class GCSUploaderService:
             output_path = os.path.join(tmpdir, filename)
 
             logger.info(f"Downloading Reel from {reel_url} ...")
-            result = subprocess.run(
-                [
-                    "yt-dlp",
-                    "--quiet",
-                    "--no-warnings",
-                    "-f", "best[height<=1080]", # Forcing smaller files
-                    "-o", output_path,
-                    reel_url,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
+            yt_cmd = get_yt_dlp_command([
+                "yt-dlp",
+                "--quiet",
+                "--no-warnings",
+                "--extractor-args", "youtube:player-client=web,tv",
+                "-o", output_path,
+                reel_url,
+            ], proxy=self.proxy)
+            
+            import shutil
+            ffmpeg_path = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+            ffprobe_path = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
 
-            if result.returncode != 0:
-                logger.error(f"yt-dlp failed: {result.stderr}")
-                raise RuntimeError(f"yt-dlp download failed: {result.stderr}")
+            try:
+                # yt_cmd[0] is now absolute if found in venv
+                result = subprocess.run(
+                    yt_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    check=True
+                )
+            except subprocess.CalledProcessError as e:
+                logger.error(f"yt-dlp failed: {e.stderr}")
+                raise RuntimeError(f"yt-dlp download failed: {e.stderr}")
+            except Exception as e:
+                logger.error(f"Unexpected error during download: {e}")
+                raise
 
             if not os.path.exists(output_path):
                 # yt-dlp may have added an extension — find the file
@@ -64,7 +77,7 @@ class GCSUploaderService:
             import json
             duration = 0.0
             probe_result = subprocess.run([
-                "ffprobe", "-v", "error", "-show_entries", "format=duration", 
+                ffprobe_path, "-v", "error", "-show_entries", "format=duration", 
                 "-of", "default=noprint_wrappers=1:nokey=1", output_path
             ], capture_output=True, text=True)
             
@@ -74,7 +87,7 @@ class GCSUploaderService:
                     logger.info(f"Video duration ({duration}s) exceeds 3 mins. Trimming to first 60s...")
                     trimmed_path = os.path.join(tmpdir, f"trimmed_{filename}")
                     trim_result = subprocess.run([
-                        "ffmpeg", "-y", "-i", output_path,
+                        ffmpeg_path, "-y", "-i", output_path,
                         "-t", "60", "-c", "copy", trimmed_path
                     ], capture_output=True, text=True)
                     if trim_result.returncode == 0 and os.path.exists(trimmed_path):
@@ -88,7 +101,7 @@ class GCSUploaderService:
 
             logger.info(f"Uploading {filename} to GCS bucket {self.bucket_name} ...")
             blob = self.bucket.blob(f"reels/{filename}")
-            blob.upload_from_filename(output_path, content_type="video/mp4")
+            blob.upload_from_filename(output_path, content_type="video/mp4", timeout=300)
 
             gcs_uri = f"gs://{self.bucket_name}/reels/{filename}"
             logger.info(f"Upload complete: {gcs_uri}")

@@ -11,17 +11,20 @@ from __future__ import annotations
 
 import logging
 import json
+import os
 import random
 import yaml
 import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import List
+from typing import List, Iterator, Dict, Any, Optional
 
 from src.ingestion.base import ContentItem, Platform, SourceAdapter, SourceType, Niche
 from src.ingestion.dedup import ContentDedup
 from src.ingestion.downloader import UniversalDownloader
+from src.utils.yt_dlp_helper import get_yt_dlp_command
+from src.utils.proxy_helper import ProxyHelper
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,12 @@ class TrendingAdapter(SourceAdapter):
         self.dedup = ContentDedup()
         self.downloader = UniversalDownloader(output_dir=Path("data/downloads/tmp"))
         self.config = self._load_configs()
+        
+        # Initialize Vertex AI for semantic filtering
+        from src.publishing_edge.config import GCP_PROJECT_ID
+        from src.cloud_function.services.vertex_ai_service import VertexAIService
+        self.ai = VertexAIService(project_id=GCP_PROJECT_ID)
+        self.proxy_helper = ProxyHelper()
         
     def _load_configs(self) -> dict:
         combined = {
@@ -67,7 +76,11 @@ class TrendingAdapter(SourceAdapter):
                     if "sources" in data:
                         for k, v in data["sources"].items():
                             if k in combined["sources"] and isinstance(v, list):
-                                combined["sources"][k].extend(v)
+                                for item in v:
+                                    if isinstance(item, dict) and item.get("enabled") is False:
+                                        logger.info(f"Skipping disabled source in {cp}: {item}")
+                                        continue
+                                    combined["sources"][k].append(item)
                     if "filters" in data:
                         combined["filters"].update(data["filters"])
                 except Exception as e:
@@ -75,44 +88,76 @@ class TrendingAdapter(SourceAdapter):
                     
         return combined
 
-    def fetch(self) -> List[ContentItem]:
-        items: List[ContentItem] = []
+    def fetch(self, exclude_platforms: List[str] = None, min_views: int = None) -> Iterator[ContentItem]:
+        if exclude_platforms is None:
+            exclude_platforms = []
+            
         sources = self.config.get("sources", {})
         
+        # Helper to check if platform is enabled and get its min_views
+        def get_p_meta(platform: str):
+            p_cfg = self.get_platform_config(platform)
+            # CLI exclude_platforms or min_views overrides config
+            is_enabled = p_cfg.get("enabled", True) and (platform not in exclude_platforms)
+            p_min_views = min_views if min_views else p_cfg.get("min_views", 100000)
+            return is_enabled, p_min_views
+
         # 1. Fetch from Reddit
-        for sub in set(sources.get("reddit", [])):
-            items.extend(self._fetch_reddit(sub))
-            
-        # 2. Fetch from YouTube specifically via SEO search terms
-        for term in set(sources.get("search_terms", [])):
-            items.extend(self._fetch_youtube_search(term))
+        enabled, p_min = get_p_meta(Platform.REDDIT)
+        if enabled:
+            for sub in set(sources.get("reddit", [])):
+                yield from self._fetch_reddit(sub, p_min)
+
+        # 2. Fetch from YouTube specific channels
+        enabled, p_min = get_p_meta(Platform.YOUTUBE)
+        if enabled:
+            for chan_info in sources.get("youtube_channels", []):
+                yield from self._fetch_youtube_channel(chan_info, p_min)
+                
+            # 3. Fetch from YouTube specifically via SEO search terms
+            for term in set(sources.get("search_terms", [])):
+                yield from self._fetch_youtube_search(term, p_min)
             
         # 3. Fetch from RSS Feeds
-        for feed in set(sources.get("rss", [])):
-            items.extend(self._fetch_rss(feed))
+        enabled, _ = get_p_meta(Platform.WEB)
+        if enabled:
+            for feed in set(sources.get("rss", [])):
+                yield from self._fetch_rss(feed)
             
         # 4. Fetch from specific Instagram news aggregators
-        for ig_page in set(sources.get("instagram_pages", [])):
-            items.extend(self._fetch_instagram_page(ig_page))
+        enabled, p_min = get_p_meta(Platform.INSTAGRAM)
+        if enabled:
+            ig_pages = sources.get("instagram_pages", [])
+            if ig_pages:
+                yield from self._fetch_instagram_pages_bulk(ig_pages, p_min)
             
         # 5. Fetch breaking news from Telegram 
-        for tg_channel in set(sources.get("telegram_channels", [])):
-            items.extend(self._fetch_telegram_channel(tg_channel))
-            
-        return items
+        enabled, _ = get_p_meta(Platform.TELEGRAM)
+        if enabled:
+            for tg_channel in set(sources.get("telegram_channels", [])):
+                yield from self._fetch_telegram_channel(tg_channel)
 
-    def _safe_get(self, url: str, headers: dict = None) -> bytes:
+    def _safe_get(self, url: str, headers: dict = None, region: str = None) -> bytes:
         if headers is None:
             headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) IGAutomation/1.0'}
+        
+        proxy_url = self.proxy_helper.get_proxy(region)
+        if proxy_url:
+            # Simple urllib proxy setup
+            proxy_handler = urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
+            opener = urllib.request.build_opener(proxy_handler)
+        else:
+            opener = urllib.request.build_opener()
+            
         req = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=15) as response:
+            with opener.open(req, timeout=15) as response:
                 return response.read()
         except Exception as e:
-            logger.error(f"Request failed for {url}: {e}")
+            logger.error(f"Request failed for {url} (Proxy: {proxy_url}): {e}")
             return b""
 
-    def _fetch_reddit(self, subreddit: str) -> List[ContentItem]:
+    def _fetch_reddit(self, subreddit: str, min_views: int = None) -> Iterator[ContentItem]:
         logger.info(f"Scanning Reddit r/{subreddit} (Percentile Selection, 24-72h)...")
         items = []
         
@@ -141,8 +186,10 @@ class TrendingAdapter(SourceAdapter):
                 if created_utc > min_age or created_utc < max_age:
                     continue
                 
-                score = post.get('ups', 0) # Assuming 'ups' is the score
-                if score < 500 and not post.get("is_original_content", False):
+                score = post.get('ups', 0)
+                # Reddit floor conversion: usually upvotes are 1/20th of views
+                reddit_floor = min_views // 20 if min_views else filters.get("reddit_min_upvotes", 5000)
+                if score < reddit_floor:
                     continue
                     
                 valid_posts.append(post)
@@ -168,8 +215,8 @@ class TrendingAdapter(SourceAdapter):
                     url=target_url,
                     platform=Platform.REDDIT,
                     source_type=self.source_type,
-                    niche=Niche.ENTERTAINMENT if subreddit in ["all", "funny"] else Niche.FUN,
-                    engagement_score=float(ups), # Score stored raw, weighted at pipeline level
+                    niche=Niche.FUN if subreddit in ["funny", "memes"] else Niche.ENTERTAINMENT,
+                    engagement_score=self.calculate_uvi("reddit", float(ups)),
                     view_count=ups,
                     like_count=ups,
                     title=title,
@@ -184,22 +231,24 @@ class TrendingAdapter(SourceAdapter):
                 message_id = f"reddit::{post.get('id')}"
                 if not self.dedup.is_dm_seen(message_id):
                     self.dedup.register_dm(message_id, post_url, target_url)
-                    items.append(item)
+                    yield item
                     logger.info(f"✅ Found Top Percentile Reddit Post: {title} ({ups} ups)")
                     
         except Exception as e:
             logger.error(f"Failed parsing Reddit r/{subreddit}: {e}")
-            
-        return items
 
-    def _fetch_youtube_search(self, term: str) -> List[ContentItem]:
+    def _fetch_youtube_search(self, term: str, min_views: int = None) -> Iterator[ContentItem]:
         logger.info(f"Scanning YouTube for SEO term: '{term}' (Percentile Selection, Max 72h old)...")
         items = []
-        # yt-dlp search for the top 50 videos related to the SEO keyword and date filters
-        cmd = ["yt-dlp", "--flat-playlist", "--dump-json", "--dateafter", "today-3days", f"ytsearch50:{term}"]
+        # yt-dlp search for the top 100 videos related to the SEO keyword and date filters
+        proxy = self.proxy_helper.get_proxy()
+        yt_cmd = get_yt_dlp_command([
+            "yt-dlp", "--flat-playlist", "--dump-json", f"ytsearch100:{term}"
+        ], proxy=proxy)
+        
         try:
             import subprocess
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            proc = subprocess.run(yt_cmd, capture_output=True, text=True, timeout=120)
             if proc.returncode == 0:
                 valid_videos = []
                 for line in proc.stdout.strip().splitlines():
@@ -230,6 +279,11 @@ class TrendingAdapter(SourceAdapter):
                     vid_id = data.get("id")
                     vid_url = f"https://www.youtube.com/watch?v={vid_id}"
                     view_count = data.get("view_count", 0)
+                    filters = self.config.get("filters", {})
+                    
+                    # 100k View Floor
+                    if view_count < filters.get("min_views", 100000):
+                        continue
                     
                     message_id = f"yt_seo::{vid_id}"
                     if not self.dedup.is_dm_seen(message_id):
@@ -238,7 +292,7 @@ class TrendingAdapter(SourceAdapter):
                             platform=Platform.YOUTUBE,
                             source_type=self.source_type,
                             niche=Niche.ENTERTAINMENT, 
-                            engagement_score=float(view_count),
+                            engagement_score=self.calculate_uvi("youtube", float(view_count)),
                             view_count=view_count,
                             title=data.get("title", ""),
                             duration_seconds=data.get("duration"),
@@ -252,49 +306,133 @@ class TrendingAdapter(SourceAdapter):
             logger.error(f"Failed fetching YouTube SEO terms via yt-dlp: {e}")
         return items
 
-    def _fetch_instagram_page(self, page_name: str) -> List[ContentItem]:
-        logger.info(f"Scanning specific Instagram news page: {page_name}")
-        items = []
-        try:
-            from src.ingestion.adapters.creator_adapter import CreatorAdapter
-            import tempfile
-            
-            # Create a temporary config to target just this news page with relaxed viral thresholds
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
-                mock_config = {
-                    "filters": {"min_views": 100000, "min_likes": 5000},
-                    "creators": {"news": [page_name]}
-                }
-                yaml.dump(mock_config, tmp)
-                tmp_path = tmp.name
-                
-            try:
-                # Instantiate and run the CreatorAdapter securely on the temporary config
-                headless = str(os.environ.get("HEADLESS", "true")).lower() == "true"
-                adapter = CreatorAdapter(config_paths=[tmp_path], headless=headless)
-                items = adapter.fetch()
-                
-                # Update source_type to reflect it was found via Trending pipeline
-                for item in items:
-                    item.source_type = self.source_type
-                    
-            finally:
-                import os
-                os.remove(tmp_path)
-                
-        except Exception as e:
-            logger.error(f"Failed standing up CreatorAdapter instance for IG page {page_name}: {e}")
-            
-        return items
-        
-    def _fetch_telegram_channel(self, channel_name: str) -> List[ContentItem]:
-        logger.info(f"Scanning Telegram OSINT channel: {channel_name}")
-        items = []
-        # TODO: Implement Telethon-based scraping looking for highest viewed MP4s in the channel
-        # within the last 12 hours.
-        return items
+    def _fetch_youtube_channel(self, chan_info: str | dict, min_views: int = None) -> Iterator[ContentItem]:
+        if isinstance(chan_info, str):
+            chan_id = chan_info
+            subscriber_baseline = 0
+            chan_name = chan_id
+        else:
+            chan_id = chan_info.get("channel_id")
+            subscriber_baseline = chan_info.get("subscriber_baseline", 0)
+            chan_name = chan_info.get("name", chan_id)
 
-    def _fetch_rss(self, feed_url: str) -> List[ContentItem]:
+        logger.info(f"Scanning YouTube channel: {chan_name} ({chan_id})")
+        items = []
+        
+        # yt-dlp to get the most recent videos with metrics
+        proxy = self.proxy_helper.get_proxy()
+        yt_cmd = get_yt_dlp_command([
+            "yt-dlp", "--flat-playlist", "--dump-json", 
+            "--playlist-end", "20",
+            f"https://www.youtube.com/channel/{chan_id}/videos"
+        ], proxy=proxy)
+        
+        try:
+            import subprocess
+            proc = subprocess.run(yt_cmd, capture_output=True, text=True, timeout=60)
+            
+            valid_videos = []
+            if proc.returncode == 0:
+                for line in proc.stdout.strip().splitlines():
+                    try:
+                        data = json.loads(line)
+                        valid_videos.append(data)
+                    except json.JSONDecodeError:
+                        continue
+            
+            if not valid_videos:
+                return items
+
+            # If no baseline provided, try to find it in the first video's metadata
+            if subscriber_baseline == 0:
+                subscriber_baseline = valid_videos[0].get("channel_follower_count", 0)
+                logger.debug(f"Auto-detected subscriber count for {chan_name}: {subscriber_baseline}")
+
+            # Outlier Multiplier Logic for YouTube
+            # We look for videos that outperform the channel's baseline by a factor (default 1.5)
+            multiplier = self.config.get("filters", {}).get("outlier_multiplier", 1.5)
+            
+            for data in valid_videos:
+                vid_id = data.get("id")
+                vid_url = f"https://www.youtube.com/watch?v={vid_id}"
+                view_count = data.get("view_count", 0)
+                
+                # View Floor
+                floor = min_views if min_views else self.config.get("filters", {}).get("min_views", 100000)
+                if view_count < floor:
+                    continue
+
+                outlier_threshold = int(subscriber_baseline * multiplier) if subscriber_baseline > 0 else 50000
+                
+                if view_count >= outlier_threshold:
+                    message_id = f"yt_chan::{vid_id}"
+                    if not self.dedup.is_dm_seen(message_id):
+                        item = ContentItem(
+                            url=vid_url,
+                            platform=Platform.YOUTUBE,
+                            source_type=self.source_type,
+                            niche=Niche.FUN if "funny" in chan_name.lower() or "meme" in chan_name.lower() else Niche.ENTERTAINMENT, 
+                            engagement_score=self.calculate_uvi("youtube", float(view_count)),
+                            view_count=view_count,
+                            title=data.get("title", ""),
+                            duration_seconds=data.get("duration"),
+                            raw_metadata={"text_prompt": data.get("title", ""), "channel": chan_name}
+                        )
+                        self.dedup.register_dm(message_id, vid_url, vid_url)
+                        yield item
+                        logger.info(f"✅ Found Viral YouTube Outlier: {item.title} ({view_count} views vs {subscriber_baseline} subs)")
+                        
+        except Exception as e:
+            logger.error(f"Failed fetching YouTube channel {chan_name}: {e}")
+
+    def _fetch_instagram_pages_bulk(self, pages: List[str | dict], min_views: int = None) -> Iterator[ContentItem]:
+        logger.info(f"Bulk scanning {len(pages)} Instagram news aggregators...")
+        
+        from src.ingestion.adapters.creator_adapter import CreatorAdapter
+        import tempfile
+        
+        # Build bulk creators config
+        news_accounts = []
+        for p in pages:
+            if isinstance(p, str):
+                news_accounts.append({"username": p, "follower_baseline": 0})
+            else:
+                news_accounts.append({"username": p.get("username"), "follower_baseline": p.get("follower_baseline", 0)})
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
+            mock_config = {
+                "filters": {
+                    "min_views": min_views if min_views else 100000, 
+                    "min_likes": 5000,
+                    "outlier_multiplier": 0.2  # Drastically relaxed for maximum yield
+                },
+                "creators": {
+                    "news": news_accounts
+                }
+            }
+            yaml.dump(mock_config, tmp)
+            tmp_path = tmp.name
+                
+        try:
+            headless = str(os.environ.get("HEADLESS", "true")).lower() == "true"
+            # SINGLE session for ALL pages
+            adapter = CreatorAdapter(config_paths=[tmp_path], headless=headless)
+            for item in adapter.fetch(min_views=min_views):
+                item.source_type = self.source_type
+                yield item
+            
+        except Exception as e:
+            logger.error(f"Failed bulk discovery for IG news pages: {e}")
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        
+    def _fetch_telegram_channel(self, channel_name: str) -> Iterator[ContentItem]:
+        logger.info(f"Scanning Telegram OSINT channel: {channel_name}")
+        # within the last 12 hours.
+        if False: yield # Generator placeholder
+
+    def _fetch_rss(self, feed_url: str) -> Iterator[ContentItem]:
         logger.info(f"Scanning RSS feed: {feed_url}")
         items = []
         xml_bytes = self._safe_get(feed_url)
@@ -337,10 +475,8 @@ class TrendingAdapter(SourceAdapter):
                             }
                         )
                         self.dedup.register_dm(message_id, link, GENERIC_BROLL_URL)
-                        items.append(item)
+                        yield item
                         logger.info(f"✅ Found Trending News/Topic: {title}")
                         
         except Exception as e:
             logger.error(f"Failed parsing RSS {feed_url}: {e}")
-            
-        return items

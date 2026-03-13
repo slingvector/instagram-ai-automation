@@ -30,9 +30,9 @@ class OllamaService:
             "1. Write a high-retention 'caption' that features multi-sentence storytelling. Move away from 1-liners: start with a strong curiosity hook, "
             "tell an engaging story providing context, naturally bake in 3-5 secondary SEO keywords into the text. End with a compelling Call to Action (CTA) "
             "directing viewers to click the link in our bio (e.g., 'Check the link in our bio for 70% off NordVPN!' or 'Read the full uncensored report at the link in our bio!').\n"
-            "2. Generate exactly 3-5 highly-targeted 'power tags' for the 'hashtags' array. All hashtags MUST be strictly lowercase.\n"
+            "2. Generate exactly 3-5 highly-targeted 'power tags' for the 'hashtags' array. All hashtags MUST start with the '#' symbol (e.g. '#viral'). Do NOT place any hashtags inside the main 'caption' text.\n"
             "3. Write a punchy 'burn_in_text' (max 5 words) to act as on-screen text overlay that forces the viewer to stop scrolling.\n\n"
-            "Provide the output in pure JSON format exactly with keys: 'caption', 'hashtags' (list of strings without #), 'burn_in_text'.\n"
+            "Provide the output in pure JSON format exactly with keys: 'caption' (no hashtags here), 'hashtags' (list of strings WITH the # prefix), 'burn_in_text'.\n"
             "Respond ONLY with valid JSON. Not markdown."
         )
 

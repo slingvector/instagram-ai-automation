@@ -11,4 +11,4 @@ if [ ! -d "$ANDROID_HOME" ]; then
 fi
 
 echo "Starting Appium with ANDROID_HOME=$ANDROID_HOME"
-npx appium > /tmp/appium.log 2>&1
+npx appium --base-path /wd/hub > /tmp/appium.log 2>&1
