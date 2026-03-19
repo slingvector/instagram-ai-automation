@@ -1,7 +1,7 @@
 import logging
-from .cinematic_pro import CinematicPro
-from .viral_pulse import ViralPulse
-from .the_visionary import TheVisionary
+from src.media_factory.styles.cinematic_pro import CinematicPro
+from src.media_factory.styles.viral_pulse import ViralPulse
+from src.media_factory.styles.the_visionary import TheVisionary
 
 logger = logging.getLogger(__name__)
 

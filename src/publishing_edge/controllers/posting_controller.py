@@ -54,6 +54,11 @@ class PostingController:
             return False
 
         data = job.to_dict()
+        current_status = data.get("status")
+        if current_status == "PUBLISHED":
+            logger.warning(f"[{job_id}] Job already marked as PUBLISHED in Firestore. Skipping to prevent duplicates.")
+            return True
+
         gcs_uri = data.get("gcs_processed_video_uri") or data.get("gcs_raw_video_uri")
         ai_meta = data.get("ai_metadata", {})
         caption = ai_meta.get("caption", "")

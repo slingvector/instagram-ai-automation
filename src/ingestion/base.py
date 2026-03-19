@@ -32,6 +32,7 @@ class Niche:
     TECH          = "tech"
     FINANCE       = "finance"
     NATURE        = "nature"
+    ADRENALINE    = "adrenaline"
     EXPLICIT      = "explicit"   # → always routed to AccountProfile.EXCLUSIVE
 
 
@@ -80,8 +81,10 @@ class ContentItem:
     engagement_score: float = 0.0
     view_count:       int   = 0
     like_count:       int   = 0
+    comment_count:    int   = 0
     save_count:       int   = 0
     share_count:      int   = 0
+    upload_timestamp: Optional[int] = None
 
     # Audio
     audio_url:    Optional[str] = None   # Original audio URL (for mood matching)
@@ -93,6 +96,9 @@ class ContentItem:
     title:            Optional[str] = None
     duration_seconds: Optional[int] = None
     shortcode:        Optional[str] = None  # IG reel shortcode for dedup
+
+    # Immersive Intelligence (Phase 1: Meta-tags)
+    immersive_metadata: dict = field(default_factory=dict) # {type, motion, perspective, score}
 
     # Extra provider-specific data
     raw_metadata: dict = field(default_factory=dict)

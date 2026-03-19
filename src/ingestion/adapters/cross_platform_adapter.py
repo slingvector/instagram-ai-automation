@@ -34,9 +34,17 @@ class CrossPlatformAdapter(SourceAdapter):
         self.max_items_per_query = max_items_per_query
         self.dedup = ContentDedup()
         
+        # Read download strategy from manifest
+        from src.ingestion.services.discovery_service import DiscoveryService
+        from src.ingestion.base import Platform
+        discovery_service = DiscoveryService("config/discovery_manifest.yaml")
+        tiktok_policy = discovery_service.get_downloader_policy(Platform.TIKTOK)
+        
         # We need the downloader just for its prefetch_metadata capability
-        # The actual download happens dynamically when scheduler.py triggers
-        self.downloader = UniversalDownloader(output_dir=Path("data/downloads/tmp"))
+        self.downloader = UniversalDownloader(
+            output_dir=Path("data/downloads/tmp"),
+            tiktok_policy=tiktok_policy
+        )
         self.targets = self._load_config()
 
     def _load_config(self) -> dict:

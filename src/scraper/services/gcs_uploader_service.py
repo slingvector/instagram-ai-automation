@@ -23,6 +23,36 @@ class GCSUploaderService:
         self.client = storage.Client()
         self.bucket = self.client.bucket(self.bucket_name)
 
+    def upload_file(self, local_path: str) -> str:
+        """Uploads a local file to GCS with a unique prefix to prevent overwrites."""
+        local_path_obj = Path(local_path)
+        # Prepend a short random ID to ensure uniqueness in GCS bucket
+        unique_id = str(uuid.uuid4())[:8]
+        filename = f"{unique_id}_{local_path_obj.name}"
+        
+        logger.info(f"Uploading {filename} to GCS bucket {self.bucket_name} ...")
+        blob = self.bucket.blob(f"reels/{filename}")
+        blob.upload_from_filename(local_path, content_type="video/mp4", timeout=300)
+        
+        gcs_uri = f"gs://{self.bucket_name}/reels/{filename}"
+        logger.info(f"Upload complete: {gcs_uri}")
+        return gcs_uri
+
+    def download_file(self, gcs_uri: str, local_path: str):
+        """Downloads a file from GCS to a local path."""
+        if not gcs_uri.startswith("gs://"):
+            raise ValueError(f"Invalid GCS URI: {gcs_uri}")
+            
+        path_parts = gcs_uri.replace("gs://", "").split("/", 1)
+        bucket_name = path_parts[0]
+        blob_name = path_parts[1]
+        
+        logger.info(f"Downloading {gcs_uri} to {local_path} ...")
+        bucket = self.client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        blob.download_to_filename(local_path)
+        logger.info(f"Download complete: {local_path}")
+
     def download_and_upload(self, reel_url: str) -> tuple[str, float]:
         """
         Downloads a Reel and uploads it to GCS.
@@ -87,7 +117,7 @@ class GCSUploaderService:
                     logger.info(f"Video duration ({duration}s) exceeds 3 mins. Trimming to first 60s...")
                     trimmed_path = os.path.join(tmpdir, f"trimmed_{filename}")
                     trim_result = subprocess.run([
-                        ffmpeg_path, "-y", "-i", output_path,
+                        ffmpeg_path, "-nostdin", "-y", "-i", output_path,
                         "-t", "60", "-c", "copy", trimmed_path
                     ], capture_output=True, text=True)
                     if trim_result.returncode == 0 and os.path.exists(trimmed_path):

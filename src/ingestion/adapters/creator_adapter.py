@@ -72,7 +72,7 @@ class CreatorAdapter(SourceAdapter):
                     
         return combined
 
-    def fetch(self, min_views: int = None) -> Iterator[ContentItem]:
+    def fetch(self, min_views: int = None, broad_mode: bool = False) -> Iterator[ContentItem]:
         """
         Open Instagram via Playwright, visit each creator's /reels/ page,
         extract shortcodes, prefetch metadata, and apply engagement filters.
@@ -229,6 +229,12 @@ class CreatorAdapter(SourceAdapter):
                             continue
                             
                         # Analyze engagement natively from our GraphQL interceptor!
+                        if broad_mode:
+                            # In broad mode, we don't care about API metadata (views/likes) yet.
+                            # We just want to populate the SCANNED queue.
+                            yield temp_item
+                            continue
+                            
                         if shortcode in api_reels:
                             views = api_reels[shortcode]["views"]
                             likes = api_reels[shortcode]["likes"]

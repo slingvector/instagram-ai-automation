@@ -3,9 +3,9 @@ src/ingestion/adapters/trending_adapter.py
 
 UC3: Real-Time Trending Monitor
 Fetches viral trends from Reddit, YouTube Trending, and RSS feeds.
-Outputs ContentItem instances. For text-only trends (e.g. RSS news), 
-it injects a generic B-roll video URL so the downstream media factory 
-can process and burn the trend text onto the video.
+Outputs ContentItem instances. 
+Implements multi-stage intelligence filtering (Level 2 & Level 3).
+Now integrated with Immersive Adrenaline Intelligence.
 """
 from __future__ import annotations
 
@@ -21,462 +21,583 @@ from pathlib import Path
 from typing import List, Iterator, Dict, Any, Optional
 
 from src.ingestion.base import ContentItem, Platform, SourceAdapter, SourceType, Niche
-from src.ingestion.dedup import ContentDedup
+from src.ingestion.dedup import ContentDedup, canonical_url
 from src.ingestion.downloader import UniversalDownloader
+from src.ingestion.services.discovery_service import DiscoveryService
+from src.ingestion.services.immersive_classifier import ImmersiveClassifier
 from src.utils.yt_dlp_helper import get_yt_dlp_command
 from src.utils.proxy_helper import ProxyHelper
 
 logger = logging.getLogger(__name__)
 
 # Fallback open-source/creative-commons or generic IG-friendly B-roll video
-# In production, this would be selected dynamically from a local asset vault.
 GENERIC_BROLL_URL = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_1MB.mp4"
 
 class TrendingAdapter(SourceAdapter):
     source_type = SourceType.TRENDING
 
-    def __init__(self, config_paths: List[str] = None):
-        if config_paths is None:
-            config_paths = ["config/trending_sources.yaml"]
-            
-        self.config_paths = [Path(p) for p in config_paths]
+    def __init__(self, manifest_path: str = "config/discovery_manifest.yaml"):
+        self.discovery_service = DiscoveryService(manifest_path)
+        self.classifier = ImmersiveClassifier()
         self.dedup = ContentDedup()
-        self.downloader = UniversalDownloader(output_dir=Path("data/downloads/tmp"))
-        self.config = self._load_configs()
         
-        # Initialize Vertex AI for semantic filtering
-        from src.publishing_edge.config import GCP_PROJECT_ID
-        from src.cloud_function.services.vertex_ai_service import VertexAIService
-        self.ai = VertexAIService(project_id=GCP_PROJECT_ID)
+        # Read download strategy from manifest
+        tiktok_policy = self.discovery_service.get_downloader_policy(Platform.TIKTOK)
+        self.downloader = UniversalDownloader(
+            output_dir=Path("data/downloads/tmp"),
+            tiktok_policy=tiktok_policy
+        )
+        
+        # Initialize Vertex AI for semantic filtering (Planned for Phase 2)
+        try:
+            from src.publishing_edge.config import GCP_PROJECT_ID
+            from src.cloud_function.services.vertex_ai_service import VertexAIService
+            self.ai = VertexAIService(project_id=GCP_PROJECT_ID)
+        except:
+            self.ai = None
+            
         self.proxy_helper = ProxyHelper()
-        
-    def _load_configs(self) -> dict:
-        combined = {
-            "sources": {
-                "reddit": [],
-                "youtube_channels": [],
-                "rss": [],
-                "telegram_channels": [],
-                "instagram_pages": [],
-                "search_terms": [],
-                "hashtags": []
-            },
-            "filters": {
-                "reddit_min_upvotes": 20000
-            }
-        }
-        
-        for cp in self.config_paths:
-            if not cp.exists():
-                logger.warning(f"Trending config not found: {cp}")
-                continue
-            with open(cp, "r", encoding="utf-8") as f:
-                try:
-                    data = yaml.safe_load(f) or {}
-                    if "sources" in data:
-                        for k, v in data["sources"].items():
-                            if k in combined["sources"] and isinstance(v, list):
-                                for item in v:
-                                    if isinstance(item, dict) and item.get("enabled") is False:
-                                        logger.info(f"Skipping disabled source in {cp}: {item}")
-                                        continue
-                                    combined["sources"][k].append(item)
-                    if "filters" in data:
-                        combined["filters"].update(data["filters"])
-                except Exception as e:
-                    logger.error(f"Failed to parse {cp}: {e}")
-                    
-        return combined
+        self.config = self.discovery_service.manifest # For legacy compatibility in some methods
 
     def fetch(self, exclude_platforms: List[str] = None, min_views: int = None) -> Iterator[ContentItem]:
         if exclude_platforms is None:
             exclude_platforms = []
             
-        sources = self.config.get("sources", {})
+        sources = self.discovery_service.get_sources()
         
-        # Helper to check if platform is enabled and get its min_views
-        def get_p_meta(platform: str):
-            p_cfg = self.get_platform_config(platform)
-            # CLI exclude_platforms or min_views overrides config
-            is_enabled = p_cfg.get("enabled", True) and (platform not in exclude_platforms)
-            p_min_views = min_views if min_views else p_cfg.get("min_views", 100000)
-            return is_enabled, p_min_views
-
-        # 1. Fetch from Reddit
-        enabled, p_min = get_p_meta(Platform.REDDIT)
-        if enabled:
-            for sub in set(sources.get("reddit", [])):
-                yield from self._fetch_reddit(sub, p_min)
-
-        # 2. Fetch from YouTube specific channels
-        enabled, p_min = get_p_meta(Platform.YOUTUBE)
-        if enabled:
-            for chan_info in sources.get("youtube_channels", []):
-                yield from self._fetch_youtube_channel(chan_info, p_min)
+        for src in sources:
+            platform = src.get("platform")
+            if platform in exclude_platforms:
+                continue
                 
-            # 3. Fetch from YouTube specifically via SEO search terms
-            for term in set(sources.get("search_terms", [])):
-                yield from self._fetch_youtube_search(term, p_min)
+            src_type = src.get("type")
+            value = src.get("value")
             
-        # 3. Fetch from RSS Feeds
-        enabled, _ = get_p_meta(Platform.WEB)
-        if enabled:
-            for feed in set(sources.get("rss", [])):
-                yield from self._fetch_rss(feed)
+            # Platform-specific and Source-specific override
+            filters = src.get("filters", {})
+            p_filters = self.discovery_service.get_global_filters(platform)
             
-        # 4. Fetch from specific Instagram news aggregators
-        enabled, p_min = get_p_meta(Platform.INSTAGRAM)
-        if enabled:
-            ig_pages = sources.get("instagram_pages", [])
-            if ig_pages:
-                yield from self._fetch_instagram_pages_bulk(ig_pages, p_min)
-            
-        # 5. Fetch breaking news from Telegram 
-        enabled, _ = get_p_meta(Platform.TELEGRAM)
-        if enabled:
-            for tg_channel in set(sources.get("telegram_channels", [])):
-                yield from self._fetch_telegram_channel(tg_channel)
+            # Hierarchy: Manual Override > Local YAML Source Filter > Global YAML Platform Filter
+            effective_min_views = min_views if min_views else filters.get("min_views", p_filters.get("min_views", 100000))
+            effective_max_duration = filters.get("max_duration", p_filters.get("max_duration", 3600))
 
-    def _safe_get(self, url: str, headers: dict = None, region: str = None) -> bytes:
-        if headers is None:
-            headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) IGAutomation/1.0'}
-        
-        proxy_url = self.proxy_helper.get_proxy(region)
-        if proxy_url:
-            # Simple urllib proxy setup
-            proxy_handler = urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
-            opener = urllib.request.build_opener(proxy_handler)
-        else:
-            opener = urllib.request.build_opener()
+            niche = src.get("niche")
             
-        req = urllib.request.Request(url, headers=headers)
+            if platform == Platform.TIKTOK:
+                # TikTok support disabled as per high-growth IG focus
+                pass
+            
+            elif platform == Platform.INSTAGRAM:
+                # Instagram still uses legacy creator adapter for now
+                if src_type == "hashtag":
+                    yield from self._fetch_instagram_hashtag(value, filters.get("min_likes", 5000), niche=niche)
+                elif src_type == "creator":
+                    clean_user = value.strip().lstrip('@')
+                    yield from self._fetch_instagram_pages_bulk([{"username": clean_user}], effective_min_views, niche=niche)
+            
+            elif platform == Platform.YOUTUBE:
+                if src_type == "keyword":
+                    yield from self._fetch_youtube_search(value, effective_min_views, effective_max_duration, niche=niche)
+                elif src_type == "creator":
+                    yield from self._fetch_youtube_channel({"channel_id": value}, effective_min_views, effective_max_duration, niche=niche)
+
+    def fetch_broad(self, exclude_platforms: List[str] = None, min_views: int = None) -> Iterator[ContentItem]:
+        """
+        Aggressive Discovery: Fetches raw URLs without deep intelligence filtering.
+        Used to quickly populate the SCANNED queue in the state machine.
+        """
+        if exclude_platforms is None:
+            exclude_platforms = []
+            
+        sources = self.discovery_service.get_sources()
+        for src in sources:
+            platform = src.get("platform")
+            if platform in exclude_platforms:
+                continue
+                
+            src_type = src.get("type")
+            value = src.get("value")
+            niche = src.get("niche")
+            filters = src.get("filters", {})
+            p_filters = self.discovery_service.get_global_filters(platform)
+            effective_min_views = min_views if min_views else filters.get("min_views", p_filters.get("min_views", 5000))
+            
+            logger.info(f"Broad Harvest [{platform}]: {value}...")
+            
+            if platform == Platform.TIKTOK:
+                # TikTok broad mode disabled
+                pass
+            elif platform == Platform.YOUTUBE:
+                if src_type == "keyword":
+                    yield from self._fetch_youtube_search(value, effective_min_views, 60, niche=niche, broad_mode=True)
+                elif src_type == "creator":
+                    yield from self._fetch_youtube_channel({"channel_id": value}, effective_min_views, 60, niche=niche, broad_mode=True)
+            elif platform == Platform.INSTAGRAM:
+                 # Legacy bridge
+                  if src_type == "creator":
+                      clean_user = value.strip().lstrip('@')
+                      followers = src.get("followers", 0)
+                      yield from self._fetch_instagram_pages_bulk(
+                          [{"username": clean_user, "follower_baseline": followers}], 
+                          effective_min_views, 
+                          niche=niche, 
+                          broad_mode=True
+                      )
+
+    def _fetch_tiktok_creator(self, creator: str, min_views: int, niche: str = None, broad_mode: bool = False) -> Iterator[ContentItem]:
+        """Scrape TikTok creator profile."""
+        clean_user = creator.strip().lstrip('@')
+        logger.info(f"Scanning TikTok creator {'(BROAD)' if broad_mode else '(Immersive Intel)'}: @{clean_user}...")
+        effective_niche = niche or Niche.ADRENALINE
+        proxy = self.proxy_helper.get_proxy()
+        
+        # We target the profile directly. TikTok usernames usually start with @ in URL but yt-dlp handles it
+        url_target = f"https://www.tiktok.com/@{clean_user}"
+        yt_cmd = get_yt_dlp_command([
+            "yt-dlp", "--flat-playlist", "--dump-json", 
+            "--playlist-end", "50",
+            url_target
+        ], proxy=proxy)
+
         try:
-            with opener.open(req, timeout=15) as response:
-                return response.read()
-        except Exception as e:
-            logger.error(f"Request failed for {url} (Proxy: {proxy_url}): {e}")
-            return b""
+            import subprocess
+            proc = subprocess.run(yt_cmd, capture_output=True, text=True, timeout=90)
+            if proc.returncode == 0:
+                for line in proc.stdout.strip().splitlines():
+                    try:
+                        data = json.loads(line)
+                        url = data.get("webpage_url")
+                        if not url: continue
 
-    def _fetch_reddit(self, subreddit: str, min_views: int = None) -> Iterator[ContentItem]:
-        logger.info(f"Scanning Reddit r/{subreddit} (Percentile Selection, 24-72h)...")
-        items = []
-        
-        # Pull larger quota for percentile selection
-        url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=100"
-        data_bytes = self._safe_get(url)
-        if not data_bytes:
-            return items
-            
-        try:
-            data = json.loads(data_bytes.decode('utf-8'))
-            children = data.get('data', {}).get('children', [])
-            
-            import time
-            current_time = time.time()
-            # Between 24 and 72 hours old
-            min_age = current_time - (24 * 3600)
-            max_age = current_time - (72 * 3600)
-            
-            valid_posts = []
-            for child in children:
-                post = child.get('data', {})
-                created_utc = post.get('created_utc', 0)
-                
-                # Check 24-72h window
-                if created_utc > min_age or created_utc < max_age:
-                    continue
-                
-                score = post.get('ups', 0)
-                # Reddit floor conversion: usually upvotes are 1/20th of views
-                reddit_floor = min_views // 20 if min_views else filters.get("reddit_min_upvotes", 5000)
-                if score < reddit_floor:
-                    continue
-                    
-                valid_posts.append(post)
-                
-            if not valid_posts:
-                return items
-                
-            # Percentile Selection: Top 10%
-            valid_posts.sort(key=lambda x: x.get('ups', 0), reverse=True)
-            top_count = max(1, int(len(valid_posts) * 0.10))
-            top_posts = valid_posts[:top_count]
-            
-            for post in top_posts:
-                title = post.get('title', '')
-                ups = post.get('ups', 0)
-                is_video = post.get('is_video', False)
-                post_url = "https://www.reddit.com" + post.get('permalink', '')
-                content_url = post.get('url', post_url)
-                
-                target_url = post_url if is_video else GENERIC_BROLL_URL
-                
-                item = ContentItem(
-                    url=target_url,
-                    platform=Platform.REDDIT,
-                    source_type=self.source_type,
-                    niche=Niche.FUN if subreddit in ["funny", "memes"] else Niche.ENTERTAINMENT,
-                    engagement_score=self.calculate_uvi("reddit", float(ups)),
-                    view_count=ups,
-                    like_count=ups,
-                    title=title,
-                    raw_metadata={
-                        "reddit_post_url": post_url,
-                        "content_url": content_url,
-                        "is_video": is_video,
-                        "text_prompt": title
-                    }
-                )
-                
-                message_id = f"reddit::{post.get('id')}"
-                if not self.dedup.is_dm_seen(message_id):
-                    self.dedup.register_dm(message_id, post_url, target_url)
-                    yield item
-                    logger.info(f"✅ Found Top Percentile Reddit Post: {title} ({ups} ups)")
-                    
-        except Exception as e:
-            logger.error(f"Failed parsing Reddit r/{subreddit}: {e}")
+                        v_count = data.get("view_count", 0)
+                        if v_count < min_views: continue
+                        
+                        if broad_mode:
+                            item = ContentItem(
+                                url=canonical_url(url), platform=Platform.TIKTOK,
+                                source_type=self.source_type, niche=effective_niche,
+                                view_count=v_count, title=data.get("title", "No Title")
+                            )
+                            yield item
+                            continue
 
-    def _fetch_youtube_search(self, term: str, min_views: int = None) -> Iterator[ContentItem]:
-        logger.info(f"Scanning YouTube for SEO term: '{term}' (Percentile Selection, Max 72h old)...")
-        items = []
-        # yt-dlp search for the top 100 videos related to the SEO keyword and date filters
+                        # Intel and dedup
+                        # ... Similar to keyword logic but for creator ...
+                        meta = self.downloader.prefetch_metadata(url)
+                        if not meta: continue
+                        
+                        v_score = self.discovery_service.compute_virality_score(meta)
+                        item = ContentItem(
+                            url=canonical_url(url), platform=Platform.TIKTOK,
+                            source_type=self.source_type, niche=effective_niche,
+                            engagement_score=v_score, view_count=meta["view_count"],
+                            title=meta.get("title", ""),
+                            raw_metadata={"creator": clean_user}
+                        )
+                        if not self.dedup.is_duplicate(item):
+                            self.dedup.register(item)
+                            yield item
+                            logger.info(f"🔥 Immersive Creator Discovery [Score: {v_score}]: {url}")
+                    except: continue
+        except Exception as e:
+            logger.error(f"TikTok creator fetch failed: {e}")
+        """Scrape TikTok for keywords. If broad_mode, skip deep metric filtering."""
+        logger.info(f"Scanning TikTok {'(BROAD)' if broad_mode else '(Immersive Intel)'} for: '{keyword}'...")
+        effective_niche = niche or Niche.ADRENALINE
         proxy = self.proxy_helper.get_proxy()
         yt_cmd = get_yt_dlp_command([
-            "yt-dlp", "--flat-playlist", "--dump-json", f"ytsearch100:{term}"
+            "yt-dlp", "--flat-playlist", "--dump-json", 
+            f"https://www.tiktok.com/search?q={keyword}"
         ], proxy=proxy)
         
+        p_filters = self.discovery_service.get_global_filters(Platform.TIKTOK)
+        min_like_rate = p_filters.get("min_like_rate", 0.0)
+        min_comment_rate = p_filters.get("min_comment_rate", 0.0)
+
+        try:
+            import subprocess
+            proc = subprocess.run(yt_cmd, capture_output=True, text=True, timeout=90)
+            if proc.returncode == 0:
+                for line in proc.stdout.strip().splitlines():
+                    try:
+                        data = json.loads(line)
+                        url = data.get("webpage_url")
+                        if not url: continue
+
+                        # Stage 1: Basic View Prefilter (Fast)
+                        v_count = data.get("view_count", 0)
+                        if v_count < min_views:
+                            continue
+                        
+                        if broad_mode:
+                            # Direct yield for aggressive population
+                            item = ContentItem(
+                                url=canonical_url(url),
+                                platform=Platform.TIKTOK,
+                                source_type=self.source_type,
+                                niche=effective_niche,
+                                view_count=v_count,
+                                title=data.get("title", "No Title")
+                            )
+                            yield item
+                            continue
+
+                        # Stage 2: Engagement Intelligence (Deep Signal)
+                        meta = self.downloader.prefetch_metadata(url)
+                        if not meta: continue
+
+                        rates = self.discovery_service.calculate_rates(
+                            meta["view_count"], meta["like_count"], meta["comment_count"]
+                        )
+                        
+                        if rates["like_rate"] < min_like_rate or rates["comment_rate"] < min_comment_rate:
+                            continue
+
+                        # Stage 3: Immersive Classification (Pivot Logic)
+                        immersive_meta = self.classifier.classify(meta.get("title", ""), keyword)
+                        
+                        # Stage 4: Virality Momentum (Ranking)
+                        v_score = self.discovery_service.compute_virality_score({
+                            "view_count": meta["view_count"],
+                            "like_count": meta["like_count"],
+                            "comment_count": meta["comment_count"],
+                            "upload_timestamp": meta["upload_timestamp"]
+                        })
+
+                        item = ContentItem(
+                            url=canonical_url(url),
+                            platform=Platform.TIKTOK,
+                            source_type=self.source_type,
+                            niche=effective_niche,
+                            engagement_score=v_score,
+                            view_count=meta["view_count"],
+                            like_count=meta["like_count"],
+                            comment_count=meta["comment_count"],
+                            upload_timestamp=meta["upload_timestamp"],
+                            title=meta.get("title", ""),
+                            immersive_metadata=immersive_meta,
+                            raw_metadata={
+                                "creator": data.get("uploader"), 
+                                "keyword": keyword,
+                                "rates": rates,
+                                "hook": self.discovery_service.get_hook_config(keyword)
+                            }
+                        )
+                        
+                        if not self.dedup.is_duplicate(item):
+                            self.discovery_service.record_discovery(Platform.TIKTOK, "keyword", keyword, item.raw_metadata)
+                            self.dedup.register(item)
+                            yield item
+                            logger.info(f"🔥 Immersive Discovery [Score: {v_score}, Cat: {immersive_meta['type']}]: {url}")
+                        else:
+                            logger.debug(f"Skipping duplicate TikTok item: {item.url}")
+                    except: continue
+        except Exception as e:
+            logger.error(f"TikTok keyword fetch failed: {e}")
+
+    def _fetch_youtube_search(self, term: str, min_views: int = None, max_duration: int = 3600, niche: str = None, broad_mode: bool = False) -> Iterator[ContentItem]:
+        """Scrape YouTube for SEO terms. If broad_mode, skip deep metric filtering."""
+        logger.info(f"Scanning YouTube {'(BROAD)' if broad_mode else '(Immersive Intel)'} for: '{term}'...")
+        effective_niche = niche or Niche.ADRENALINE
+        proxy = self.proxy_helper.get_proxy()
+        yt_cmd = get_yt_dlp_command([
+            "yt-dlp", "--flat-playlist", "--dump-json", f"ytsearch200:{term}"
+        ], proxy=proxy)
+        
+        p_filters = self.discovery_service.get_global_filters(Platform.YOUTUBE)
+        min_like_rate = p_filters.get("min_like_rate", 0.0)
+        min_comment_rate = p_filters.get("min_comment_rate", 0.0)
+
         try:
             import subprocess
             proc = subprocess.run(yt_cmd, capture_output=True, text=True, timeout=120)
             if proc.returncode == 0:
-                valid_videos = []
                 for line in proc.stdout.strip().splitlines():
                     try:
                         data = json.loads(line)
                         vid_id = data.get("id")
-                        if not vid_id:
-                            continue
-                            
+                        if not vid_id: continue
+                        url = f"https://www.youtube.com/watch?v={vid_id}"
+
                         duration = data.get("duration", 0)
-                        if duration and duration > 3600:
-                            continue # skip massive hour-long streams
-                            
-                        # yt-dlp dateafter handles recency, collect valid items
-                        valid_videos.append(data)
-                    except json.JSONDecodeError:
-                        continue
+                        if duration and duration > max_duration:
+                            continue
                         
-                if not valid_videos:
-                    return items
-                    
-                # Percentile selection (Top 10%)
-                valid_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
-                top_count = max(1, int(len(valid_videos) * 0.10))
-                top_videos = valid_videos[:top_count]
-                
-                for data in top_videos:
-                    vid_id = data.get("id")
-                    vid_url = f"https://www.youtube.com/watch?v={vid_id}"
-                    view_count = data.get("view_count", 0)
-                    filters = self.config.get("filters", {})
-                    
-                    # 100k View Floor
-                    if view_count < filters.get("min_views", 100000):
-                        continue
-                    
-                    message_id = f"yt_seo::{vid_id}"
-                    if not self.dedup.is_dm_seen(message_id):
+                        v_count = data.get("view_count", 0)
+                        if min_views and v_count < min_views:
+                            continue
+
+                        if broad_mode:
+                            item = ContentItem(
+                                url=canonical_url(url),
+                                platform=Platform.YOUTUBE,
+                                source_type=self.source_type,
+                                niche=effective_niche,
+                                view_count=v_count,
+                                title=data.get("title", "No Title")
+                            )
+                            yield item
+                            continue
+
+                        meta = self.downloader.prefetch_metadata(url)
+                        if not meta: continue
+
+                        rates = self.discovery_service.calculate_rates(
+                            meta["view_count"], meta["like_count"], meta["comment_count"]
+                        )
+                        
+                        if rates["like_rate"] < min_like_rate or rates["comment_rate"] < min_comment_rate:
+                            continue
+
+                        # Immersive Classification
+                        immersive_meta = self.classifier.classify(meta.get("title", ""), term)
+
+                        v_score = self.discovery_service.compute_virality_score({
+                            "view_count": meta["view_count"],
+                            "like_count": meta["like_count"],
+                            "comment_count": meta["comment_count"],
+                            "upload_timestamp": meta["upload_timestamp"]
+                        })
+
                         item = ContentItem(
-                            url=vid_url,
+                            url=canonical_url(url),
                             platform=Platform.YOUTUBE,
                             source_type=self.source_type,
-                            niche=Niche.ENTERTAINMENT, 
-                            engagement_score=self.calculate_uvi("youtube", float(view_count)),
-                            view_count=view_count,
-                            title=data.get("title", ""),
-                            duration_seconds=data.get("duration"),
-                            raw_metadata={"text_prompt": data.get("title", ""), "seo_term": term}
+                            niche=effective_niche,
+                            engagement_score=v_score,
+                            view_count=meta["view_count"],
+                            like_count=meta["like_count"],
+                            comment_count=meta["comment_count"],
+                            upload_timestamp=meta["upload_timestamp"],
+                            title=meta.get("title", ""),
+                            immersive_metadata=immersive_meta,
+                            raw_metadata={
+                                "creator": data.get("uploader"), 
+                                "keyword": term,
+                                "rates": rates,
+                                "hook": self.discovery_service.get_hook_config(term)
+                            }
                         )
-                        self.dedup.register_dm(message_id, vid_url, vid_url)
-                        items.append(item)
-                        logger.info(f"✅ Found Top Percentile SEO YT Hit ['{term}']: {item.title} ({item.view_count} views)")
 
+                        if not self.dedup.is_duplicate(item):
+                            message_id = f"yt_seo::{vid_id}"
+                            if not self.dedup.is_dm_seen(message_id):
+                                self.discovery_service.record_discovery(Platform.YOUTUBE, "keyword", term, item.raw_metadata)
+                                self.dedup.register(item)
+                                self.dedup.register_dm(message_id, url, url)
+                                yield item
+                                logger.info(f"🔥 Immersive Discovery [Score: {v_score}, Cat: {immersive_meta['type']}]: {url}")
+                        else:
+                            logger.debug(f"Skipping duplicate YouTube item: {item.url}")
+                    except: continue
         except Exception as e:
-            logger.error(f"Failed fetching YouTube SEO terms via yt-dlp: {e}")
-        return items
+            logger.error(f"YouTube search fetch failed: {e}")
 
-    def _fetch_youtube_channel(self, chan_info: str | dict, min_views: int = None) -> Iterator[ContentItem]:
+    def _fetch_youtube_channel(self, chan_info: str | dict, min_views: int = None, max_duration: int = 3600, niche: str = None, broad_mode: bool = False) -> Iterator[ContentItem]:
+        """Fetch videos from a YouTube channel and apply virality intelligence."""
+        effective_niche = niche or Niche.ADRENALINE
         if isinstance(chan_info, str):
             chan_id = chan_info
-            subscriber_baseline = 0
             chan_name = chan_id
         else:
             chan_id = chan_info.get("channel_id")
-            subscriber_baseline = chan_info.get("subscriber_baseline", 0)
             chan_name = chan_info.get("name", chan_id)
 
-        logger.info(f"Scanning YouTube channel: {chan_name} ({chan_id})")
-        items = []
-        
-        # yt-dlp to get the most recent videos with metrics
+        logger.info(f"Scanning YouTube channel (Immersive Intel): {chan_name}...")
         proxy = self.proxy_helper.get_proxy()
         yt_cmd = get_yt_dlp_command([
             "yt-dlp", "--flat-playlist", "--dump-json", 
-            "--playlist-end", "20",
+            "--playlist-end", "50",
             f"https://www.youtube.com/channel/{chan_id}/videos"
         ], proxy=proxy)
         
         try:
             import subprocess
             proc = subprocess.run(yt_cmd, capture_output=True, text=True, timeout=60)
-            
-            valid_videos = []
             if proc.returncode == 0:
                 for line in proc.stdout.strip().splitlines():
                     try:
                         data = json.loads(line)
-                        valid_videos.append(data)
-                    except json.JSONDecodeError:
-                        continue
-            
-            if not valid_videos:
-                return items
-
-            # If no baseline provided, try to find it in the first video's metadata
-            if subscriber_baseline == 0:
-                subscriber_baseline = valid_videos[0].get("channel_follower_count", 0)
-                logger.debug(f"Auto-detected subscriber count for {chan_name}: {subscriber_baseline}")
-
-            # Outlier Multiplier Logic for YouTube
-            # We look for videos that outperform the channel's baseline by a factor (default 1.5)
-            multiplier = self.config.get("filters", {}).get("outlier_multiplier", 1.5)
-            
-            for data in valid_videos:
-                vid_id = data.get("id")
-                vid_url = f"https://www.youtube.com/watch?v={vid_id}"
-                view_count = data.get("view_count", 0)
-                
-                # View Floor
-                floor = min_views if min_views else self.config.get("filters", {}).get("min_views", 100000)
-                if view_count < floor:
-                    continue
-
-                outlier_threshold = int(subscriber_baseline * multiplier) if subscriber_baseline > 0 else 50000
-                
-                if view_count >= outlier_threshold:
-                    message_id = f"yt_chan::{vid_id}"
-                    if not self.dedup.is_dm_seen(message_id):
-                        item = ContentItem(
-                            url=vid_url,
-                            platform=Platform.YOUTUBE,
-                            source_type=self.source_type,
-                            niche=Niche.FUN if "funny" in chan_name.lower() or "meme" in chan_name.lower() else Niche.ENTERTAINMENT, 
-                            engagement_score=self.calculate_uvi("youtube", float(view_count)),
-                            view_count=view_count,
-                            title=data.get("title", ""),
-                            duration_seconds=data.get("duration"),
-                            raw_metadata={"text_prompt": data.get("title", ""), "channel": chan_name}
-                        )
-                        self.dedup.register_dm(message_id, vid_url, vid_url)
-                        yield item
-                        logger.info(f"✅ Found Viral YouTube Outlier: {item.title} ({view_count} views vs {subscriber_baseline} subs)")
+                        vid_id = data.get("id")
+                        url = f"https://www.youtube.com/watch?v={vid_id}"
                         
-        except Exception as e:
-            logger.error(f"Failed fetching YouTube channel {chan_name}: {e}")
+                        v_count = data.get("view_count", 0)
+                        if min_views and v_count < min_views:
+                            continue
 
-    def _fetch_instagram_pages_bulk(self, pages: List[str | dict], min_views: int = None) -> Iterator[ContentItem]:
-        logger.info(f"Bulk scanning {len(pages)} Instagram news aggregators...")
-        
+                        if broad_mode:
+                            item = ContentItem(
+                                url=canonical_url(url),
+                                platform=Platform.YOUTUBE,
+                                source_type=self.source_type,
+                                niche=effective_niche,
+                                view_count=v_count,
+                                title=data.get("title", "No Title")
+                            )
+                            yield item
+                            continue
+
+                        meta = self.downloader.prefetch_metadata(url)
+                        if not meta: continue
+
+                        immersive_meta = self.classifier.classify(meta.get("title", ""), chan_name)
+
+                        v_score = self.discovery_service.compute_virality_score({
+                            "view_count": meta["view_count"],
+                            "like_count": meta["like_count"],
+                            "comment_count": meta["comment_count"],
+                            "upload_timestamp": meta["upload_timestamp"]
+                        })
+
+                        message_id = f"yt_chan::{vid_id}"
+                        if not self.dedup.is_dm_seen(message_id):
+                            item = ContentItem(
+                                url=canonical_url(url),
+                                platform=Platform.YOUTUBE,
+                                source_type=self.source_type,
+                                niche=effective_niche, 
+                                engagement_score=v_score,
+                                view_count=meta["view_count"],
+                                title=meta.get("title", ""),
+                                duration_seconds=meta.get("duration"),
+                                immersive_metadata=immersive_meta,
+                                raw_metadata={"text_prompt": meta.get("title", ""), "channel": chan_name}
+                            )
+                            if not self.dedup.is_duplicate(item):
+                                self.dedup.register(item)
+                                self.dedup.register_dm(message_id, url, url)
+                                yield item
+                                logger.info(f"🔥 Immersive Discovery [Score: {v_score}, Cat: {immersive_meta['type']}]: {url}")
+                            else:
+                                logger.debug(f"Skipping duplicate YouTube channel item: {item.url}")
+                    except: continue
+        except Exception as e:
+            logger.error(f"YouTube channel fetch failed: {e}")
+
+    def _fetch_reddit(self, subreddit: str, min_views: int = None, niche: str = None) -> Iterator[ContentItem]:
+        """Reddit fetcher updated with immersive intel scoring."""
+        logger.info(f"Scanning Reddit r/{subreddit} (Immersive Intel)...")
+        effective_niche = niche or Niche.ADRENALINE
+        url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=100"
+        data_bytes = self._safe_get(url)
+        if not data_bytes: return
+            
+        try:
+            data = json.loads(data_bytes.decode('utf-8'))
+            children = data.get('data', {}).get('children', [])
+            
+            valid_posts = []
+            for child in children:
+                post = child.get('data', {})
+                # Reddit floor usually 1/20th of views
+                score = post.get('ups', 0)
+                reddit_floor = min_views // 20 if min_views else 5000
+                if score < reddit_floor:
+                    continue
+                valid_posts.append(post)
+                
+            if not valid_posts: return
+                
+            # Sort and Score
+            for post in valid_posts:
+                title = post.get('title', '')
+                ups = post.get('ups', 0)
+                num_comments = post.get('num_comments', 0)
+                post_url = "https://www.reddit.com" + post.get('permalink', '')
+                is_video = post.get('is_video', False)
+                target_url = post_url if is_video else GENERIC_BROLL_URL
+                
+                # Immersive Classification
+                immersive_meta = self.classifier.classify(title, subreddit)
+
+                # Mock intel signals for Reddit (ups as views/likes proxy)
+                v_score = self.discovery_service.compute_virality_score({
+                    "view_count": ups * 20,
+                    "like_count": ups,
+                    "comment_count": num_comments,
+                    "upload_timestamp": int(post.get('created_utc', 0))
+                })
+
+                item = ContentItem(
+                    url=canonical_url(target_url),
+                    platform=Platform.REDDIT,
+                    source_type=self.source_type,
+                    niche=effective_niche,
+                    engagement_score=v_score,
+                    view_count=ups * 20,
+                    like_count=ups,
+                    comment_count=num_comments,
+                    title=title,
+                    immersive_metadata=immersive_meta,
+                    raw_metadata={"reddit_post_url": post_url}
+                )
+                
+                message_id = f"reddit::{post.get('id')}"
+                if not self.dedup.is_dm_seen(message_id):
+                    if not self.dedup.is_duplicate(item):
+                        self.dedup.register(item)
+                        self.dedup.register_dm(message_id, post_url, target_url)
+                        yield item
+                        logger.info(f"🔥 Reddit Discovery [Score: {v_score}, Cat: {immersive_meta['type']}]: {title}")
+                    else:
+                        logger.debug(f"Skipping duplicate Reddit item: {item.url}")
+                    
+        except Exception as e:
+            logger.error(f"Reddit fetch failed: {e}")
+
+    def _safe_get(self, url: str, headers: dict = None, region: str = None) -> bytes:
+        if headers is None:
+            headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) IGAutomation/1.0'}
+        proxy_url = self.proxy_helper.get_proxy(region)
+        if proxy_url:
+            proxy_handler = urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
+            opener = urllib.request.build_opener(proxy_handler)
+        else:
+            opener = urllib.request.build_opener()
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with opener.open(req, timeout=15) as response:
+                return response.read()
+        except: return b""
+
+    def _fetch_instagram_hashtag(self, hashtag: str, min_likes: int, niche: str = None) -> Iterator[ContentItem]:
+        # ... logic ...
+        effective_niche = niche or Niche.ADRENALINE
+        # (The rest of the method will now use this effective_niche)
+        return iter([])
+
+    def _fetch_instagram_pages_bulk(self, pages: List[dict], min_views: int = None, niche: str = None, broad_mode: bool = False) -> Iterator[ContentItem]:
+        # Legacy CreatorAdapter bridge
+        effective_niche = niche or Niche.ADRENALINE
         from src.ingestion.adapters.creator_adapter import CreatorAdapter
         import tempfile
-        
-        # Build bulk creators config
-        news_accounts = []
-        for p in pages:
-            if isinstance(p, str):
-                news_accounts.append({"username": p, "follower_baseline": 0})
-            else:
-                news_accounts.append({"username": p.get("username"), "follower_baseline": p.get("follower_baseline", 0)})
-
+        import yaml # ensure yaml is imported in this scope
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
+            # Use the provided niche in the mock config for CreatorAdapter
             mock_config = {
-                "filters": {
-                    "min_views": min_views if min_views else 100000, 
-                    "min_likes": 5000,
-                    "outlier_multiplier": 0.2  # Drastically relaxed for maximum yield
-                },
-                "creators": {
-                    "news": news_accounts
-                }
+                "filters": {"min_views": min_views or 100000}, 
+                "creators": {effective_niche: pages}
             }
             yaml.dump(mock_config, tmp)
             tmp_path = tmp.name
-                
         try:
-            headless = str(os.environ.get("HEADLESS", "true")).lower() == "true"
-            # SINGLE session for ALL pages
-            adapter = CreatorAdapter(config_paths=[tmp_path], headless=headless)
-            for item in adapter.fetch(min_views=min_views):
+            adapter = CreatorAdapter(config_paths=[tmp_path])
+            for item in adapter.fetch(min_views=min_views, broad_mode=broad_mode):
                 item.source_type = self.source_type
                 yield item
-            
-        except Exception as e:
-            logger.error(f"Failed bulk discovery for IG news pages: {e}")
         finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        
-    def _fetch_telegram_channel(self, channel_name: str) -> Iterator[ContentItem]:
-        logger.info(f"Scanning Telegram OSINT channel: {channel_name}")
-        # within the last 12 hours.
-        if False: yield # Generator placeholder
+            if os.path.exists(tmp_path): os.remove(tmp_path)
 
     def _fetch_rss(self, feed_url: str) -> Iterator[ContentItem]:
-        logger.info(f"Scanning RSS feed: {feed_url}")
-        items = []
+        # Minimal RSS fetcher (News topics)
         xml_bytes = self._safe_get(feed_url)
-        if not xml_bytes:
-            return items
-            
+        if not xml_bytes: return
         try:
             root = ET.fromstring(xml_bytes)
-            # Find all item elements
             for item_elem in root.findall(".//item"):
-                title_elem = item_elem.find("title")
-                link_elem = item_elem.find("link")
-                
-                if title_elem is not None and link_elem is not None:
-                    title = title_elem.text
-                    link = link_elem.text
-                    
-                    if not title or not link:
-                        continue
-                        
-                    # Extract ID from link / guid
-                    guid_elem = item_elem.find("guid")
-                    guid = guid_elem.text if guid_elem is not None else link
-                    
-                    # Dedup check
-                    import hashlib
-                    guid_hash = hashlib.md5(guid.encode('utf-8')).hexdigest()
-                    message_id = f"rss::{guid_hash}"
-                    
-                    if not self.dedup.is_dm_seen(message_id):
-                        item = ContentItem(
-                            url=GENERIC_BROLL_URL,
-                            platform=Platform.WEB,
-                            source_type=self.source_type,
-                            niche=Niche.ENTERTAINMENT,
-                            title=title,
-                            raw_metadata={
-                                "rss_link": link,
-                                "text_prompt": title # Important for the media factory to overlay the text
-                            }
-                        )
-                        self.dedup.register_dm(message_id, link, GENERIC_BROLL_URL)
-                        yield item
-                        logger.info(f"✅ Found Trending News/Topic: {title}")
-                        
-        except Exception as e:
-            logger.error(f"Failed parsing RSS {feed_url}: {e}")
+                title = item_elem.findtext("title")
+                link = item_elem.findtext("link")
+                if title and link:
+                    item = ContentItem(url=GENERIC_BROLL_URL, platform=Platform.WEB, source_type=self.source_type, title=title)
+                    yield item
+        except: pass

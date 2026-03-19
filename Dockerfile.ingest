@@ -15,7 +15,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libsqlite3-dev \
+    fontconfig \
+    fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
+
+# Rebuild the system font cache so libass knows the font exists
+RUN fc-cache -f -v
 
 # Install python dependencies first to leverage Docker layer caching
 COPY requirements.txt .

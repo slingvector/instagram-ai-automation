@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from src.ingestion.dedup import canonical_url
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,8 @@ class ReelState:
     CAPTIONED = "CAPTIONED"
     JOB_CREATED = "JOB_CREATED"
     MEDIA_PROCESSED = "MEDIA_PROCESSED"
+    SYNCED_TO_DRIVE = "SYNCED_TO_DRIVE"
+    POSTING = "POSTING"
     POSTED = "POSTED"
     FAILED = "FAILED"
 
@@ -36,6 +39,7 @@ class StateManager:
                 CREATE TABLE IF NOT EXISTS reel_states (
                     url TEXT PRIMARY KEY,
                     title TEXT,
+                    platform TEXT,
                     source TEXT,
                     niche TEXT,
                     state TEXT,
@@ -43,28 +47,35 @@ class StateManager:
                     ai_metadata TEXT,
                     job_id TEXT,
                     processed_uri TEXT,
+                    drive_folder_id TEXT,
                     tx_hash TEXT,
                     error_message TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            # Migration check: add niche column if missing
+            # Migration checks
             try:
                 cursor.execute("ALTER TABLE reel_states ADD COLUMN niche TEXT")
-            except sqlite3.OperationalError:
-                pass # Already exists
+            except sqlite3.OperationalError: pass
+            try:
+                cursor.execute("ALTER TABLE reel_states ADD COLUMN platform TEXT")
+            except sqlite3.OperationalError: pass
+            try:
+                cursor.execute("ALTER TABLE reel_states ADD COLUMN drive_folder_id TEXT")
+            except sqlite3.OperationalError: pass
             conn.commit()
 
-    def add_discovered_reel(self, url: str, title: str, source: str, niche: str = "general") -> bool:
+    def add_discovered_reel(self, url: str, title: str, platform: str, source: str, niche: str = "general") -> bool:
         """Adds a new reel if it doesn't already exist. Returns True if added."""
+        clean_url = canonical_url(url)
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             try:
                 cursor.execute("""
-                    INSERT INTO reel_states (url, title, source, niche, state)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (url, title, source, niche, ReelState.SCANNED))
+                    INSERT INTO reel_states (url, title, platform, source, niche, state)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (clean_url, title, platform, source, niche, ReelState.SCANNED))
                 conn.commit()
                 return True
             except sqlite3.IntegrityError:
@@ -90,7 +101,7 @@ class StateManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            states = [ReelState.POSTED]
+            states = [ReelState.POSTED, ReelState.POSTING]
             if not include_failed:
                 states.append(ReelState.FAILED)
                 
@@ -114,7 +125,7 @@ class StateManager:
 
         # Valid fields to update mapping
         # Ensure we only update columns that exist
-        valid_columns = ["gcs_uri", "ai_metadata", "job_id", "processed_uri", "tx_hash", "error_message"]
+        valid_columns = ["gcs_uri", "ai_metadata", "job_id", "processed_uri", "drive_folder_id", "tx_hash", "error_message", "title"]
         
         for key, val in kwargs.items():
             if key in valid_columns:

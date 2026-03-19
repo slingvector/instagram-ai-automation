@@ -11,7 +11,7 @@ from src.media_factory.utils.ass_generator import ASSGenerator
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 def test_emoji_burst():
-    print("\n--- Testing 'Burst Mode' (Story-Pop) Emoji Storm ---")
+    print("\n--- Testing 'Burst Mode' (Story-Pop) Emoji Storm [v3 - Noto Fix] ---")
     gen = ASSGenerator()
     
     # Mock transcription with a high-density burst
@@ -34,39 +34,40 @@ def test_emoji_burst():
         "duration": 5.0
     }
     
-    output_path = "/tmp/test_burst.ass"
+    output_path = "/tmp/test_burst_v3.ass"
     gen.generate(mock_transcription, output_path, headline="BURST TEST")
     
     if os.path.exists(output_path):
-        with open(output_path, "r") as f:
+        with open(output_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
             
-        print(f"Generated {output_path}")
+        print(f"Generated {output_path}\n")
         
-        # Checks
+        # Base Kinetic Checks
         reaction_lines = [l for l in lines if l.startswith("Dialogue: 1,")]
         fade_out_count = sum(1 for l in lines if "\\alpha&HFF&" in l)
         move_count = sum(1 for l in lines if "\\move(" in l)
         jitter_check = len(set([l.split(",")[1] for l in reaction_lines])) > 1
         
-        # PRO PARITY CHECKS (v2.6)
-        # 1. Ensure Emoji style is defined
-        style_defined = any("Style: Emoji," in l and "Apple Color Emoji" in l for l in lines)
+        # REAL-WORLD PARITY CHECKS (v3)
+        # 1. Verify the header explicitly maps the Emoji style to the open-source font
+        style_defined_v3 = any("Style: Emoji,Noto Color Emoji," in l for l in lines)
         
-        # 2. Ensure ALL burst lines use the \fnEmoji style alias (not hardcoded font name)
-        # Using the style alias ensures FFmpeg's renderer handles the fallback correctly
-        style_alias_v2 = all("\\fnEmoji" in l for l in reaction_lines)
+        # 2. Ensure Burst lines (Layer 1) DO NOT have inline \fn overrides that break the header style
+        # We check the text payload at the end of the line (after the 9th comma)
+        no_inline_override = all("\\fn" not in l.split(",,")[-1] for l in reaction_lines)
         
-        # 3. Blacklist direct font name usage in kinetic tags (this caused the 'tofu' bug)
-        tofu_leak = any("\\fnApple Color Emoji" in l for l in lines)
+        # 3. Tofu Blacklist: Ensure Apple's proprietary bitmap font is completely purged
+        tofu_leak_resolved = not any("Apple Color Emoji" in l for l in lines)
         
         print(f"Burst Density (Count): {len(reaction_lines)} (Expected 8)")
         print(f"Fade-Out Animations: {'✅' if fade_out_count >= 8 else '❌'}")
-        print(f"Trajectory Moves: {'✅' if move_count >= 8 else '❌'}")
-        print(f"Jittered Timing: {'✅' if jitter_check else '❌'}")
-        print(f"Emoji Style Defined: {'✅' if style_defined else '❌'}")
-        print(f"Font Mapping (\fnEmoji): {'✅' if style_alias_v2 else '❌'}")
-        print(f"Tofu Font Leak Detection: {'✅' if not tofu_leak else '🚨 FAILED (tofu leak detected)'}")
+        print(f"Trajectory Moves:    {'✅' if move_count >= 8 else '❌'}")
+        print(f"Jittered Timing:     {'✅' if jitter_check else '❌'}")
+        print("-" * 40)
+        print(f"Header Maps to Noto Color Emoji: {'✅' if style_defined_v3 else '❌'}")
+        print(f"Clean Layer 1 (No \\fn Hijacking): {'✅' if no_inline_override else '❌'}")
+        print(f"Tofu Blacklist (No Apple Bitmap): {'✅' if tofu_leak_resolved else '🚨 FAILED'}")
         
         # Validation Logic
         success = (
@@ -74,13 +75,13 @@ def test_emoji_burst():
             fade_out_count >= 8 and 
             move_count >= 8 and 
             jitter_check and
-            style_defined and
-            style_alias_v2 and
-            not tofu_leak
+            style_defined_v3 and
+            no_inline_override and
+            tofu_leak_resolved
         )
         
         if success:
-            print("\n🎉 BURST MODE VERIFICATION PASSED (HARDENED)!")
+            print("\n🎉 REAL-WORLD VERIFICATION PASSED! Ready for FFmpeg rendering.")
             return True
     
     print("\n🚨 BURST MODE VERIFICATION FAILED!")

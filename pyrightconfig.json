@@ -1,0 +1,29 @@
+{
+    "include": [
+        "src",
+        "tests",
+        "scripts",
+        "tools"
+    ],
+    "exclude": [
+        "**/node_modules",
+        "**/__pycache__",
+        "venv"
+    ],
+    "executionEnvironments": [
+        {
+            "root": ".",
+            "pythonVersion": "3.11",
+            "extraPaths": [
+                "."
+            ]
+        }
+    ],
+    "reportMissingImports": true,
+    "reportMissingTypeStubs": false,
+    "pythonPlatform": "Darwin",
+    "pythonVersion": "3.11",
+    "extraPaths": [
+        "."
+    ]
+}

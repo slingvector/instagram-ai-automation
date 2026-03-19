@@ -1,22 +1,29 @@
 import ffmpeg
-from .base_style import BaseStyle
+from typing import Any
+from src.media_factory.styles.base_style import BaseStyle
 
 class CinematicPro(BaseStyle):
     """
     High-end cinematic style with heavy grading, letterboxing, and Ken Burns motion.
     Best for: Travel, Storytelling.
     """
-    def apply(self, input_stream, text: str, duration: float, roi: dict = None, 
-              transcription_data: dict = None, ass_path: str = None, 
-              audio_peaks: list = None, pump_intensity: float = 1.0,
+    def apply(self, input_stream, text: str, duration: float, roi: Any = None, 
+              transcription_data: Any = None, ass_path: Any = None, 
+              burst_manifest: Any = None,
+              audio_peaks: Any = None, pump_intensity: float = 1.0,
               width: int = 1920, height: int = 1080,
-              template: dict = None):
+              template: Any = None):
+        # 0. Split input for multi-branch usage
+        video_split = input_stream.video.split()
+        v1 = video_split[0]
+        v2 = video_split[1]
+
         # 1. Background (9:16 blurred)
-        bg = self.get_916_background(input_stream.video)
+        bg = self.get_916_background(v1)
         
         # 2. Foreground with Ken Burns zoom (slow 1.1x zoom over time)
         fg = (
-            input_stream.video
+            v2
             .filter('scale', 1080, -1)
             # Subtle slow zoom
             .filter('zoompan', z='min(zoom+0.0005,1.1)', d=1, s='1080x600', x='iw/2-(iw/zoom/2)', y='ih/2-(ih/zoom/2)')
@@ -40,7 +47,12 @@ class CinematicPro(BaseStyle):
         out = out.filter('drawbox', x=0, y=0, w='iw', h=100, color='black', t='fill')
         out = out.filter('drawbox', x=0, y='ih-100', w='iw', h=100, color='black', t='fill')
         
-        # 7. Kinetic Typography (ASS) - HEADLINE + CAPTIONS consolidated
+        # 7. High-Fidelity Emoji Overlays (Sprite Engine)
+        if burst_manifest:
+            out = self.apply_emoji_overlays(out, burst_manifest, audio_peaks=audio_peaks)
+            
+        # 8. Kinetic Typography (ASS) - HEADLINE + CAPTIONS consolidated
+        # Applied LAST to ensure text stays on top of emojis
         if ass_path:
             out = self.apply_ass_subtitles(out, ass_path)
         else:

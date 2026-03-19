@@ -16,9 +16,12 @@ from selenium.common.exceptions import TimeoutException, InvalidSessionIdExcepti
 
 from src.publishing_edge.services.adb_client import ADBClient
 from src.publishing_edge.config import (
-    APPIUM_HOST, DEVICE_UDID, INSTAGRAM_PACKAGE,
+    APPIUM_HOST as CONFIG_APPIUM_HOST, DEVICE_UDID, INSTAGRAM_PACKAGE,
     INSTAGRAM_ACTIVITY, NEW_COMMAND_TIMEOUT, ANDROID_HOME
 )
+
+# Hardened sanitization: Ensure no legacy /wd/hub suffix enters the connection URL
+APPIUM_HOST = CONFIG_APPIUM_HOST.replace("/wd/hub", "").rstrip("/")
 
 # Hardward Environment Persistence: Ensure Appium client process has SDK paths
 if ANDROID_HOME:
@@ -84,6 +87,9 @@ class AppiumPostingService:
         
         # Instruct Appium server to drop any stale port configurations and logs before reconnecting
         options.set_capability("appium:clearSystemFiles", True)
+        # Industrial reliability: extend timeouts for slow device installs
+        options.set_capability("appium:uiautomator2ServerInstallTimeout", 60000)
+        options.set_capability("appium:adbExecTimeout", 30000)
 
         if DEVICE_UDID:
             options.udid = DEVICE_UDID
@@ -97,6 +103,15 @@ class AppiumPostingService:
         max_retries = 3
         for attempt in range(max_retries):
             try:
+                # Pre-emptive ADB recovery on retry
+                if attempt > 0:
+                    logger.warning(f"Appium: Attempt {attempt + 1}: Triggering ADB wake + deep cleaner...")
+                    self._adb.wake_screen()
+                    self._adb._run(["shell", "am", "force-stop", "io.appium.uiautomator2.server"])
+                    self._adb._run(["shell", "am", "force-stop", "io.appium.uiautomator2.server.test"])
+                    self._adb._run(["shell", "am", "force-stop", "com.instagram.android"])
+                    time.sleep(3)
+
                 logger.info(f"Appium: Requesting new session on {APPIUM_HOST} (Attempt {attempt + 1}/{max_retries})")
                 self._driver = webdriver.Remote(APPIUM_HOST, options=options)
                 self._driver.implicitly_wait(10)
@@ -105,10 +120,6 @@ class AppiumPostingService:
             except WebDriverException as e: 
                 error_msg = str(e)
                 logger.error(f"Appium session initiation failed: {error_msg}")
-                
-                # If it was a connection refused, warn that the server might be completely down
-                if "Connection refused" in error_msg or "Failed to establish a new connection" in error_msg:
-                    logger.error("🛑 Appium Server seems DOWN or Unreachable. Please ensure 'appium' is running on the host.")
                 
                 # Check for "UiAutomation not connected" or generic connection refused
                 is_connection_refused = "Connection refused" in error_msg or "Failed to establish a new connection" in error_msg
@@ -902,15 +913,45 @@ class AppiumPostingService:
             
             # ── Step 5: Tap "Copy link" in the share sheet ───────────────────
             logger.info("Step 5: Tap 'Copy link' in share sheet")
-            if not self._tap_by_text_xml("Copy link", timeout=WAIT_MEDIUM, exact_match=False):
-                # Fallback: "Copy link" is typically in the top row of the share sheet
-                # If not visible, try scrolling the share sheet up first
-                logger.warning("'Copy link' not found via XML. Trying scroll then retry...")
+            
+            # Strategy A: Direct XML detection (Horizontal Reshare Row)
+            found_copy_link = False
+            for attempt in range(2):
+                if self._tap_by_text_xml("Copy link", timeout=WAIT_SHORT, exact_match=False):
+                    found_copy_link = True
+                    break
+                
+                if attempt == 0:
+                    logger.warning("'Copy link' not immediately visible. Swiping reshare row horizontally...")
+                    # Swipe the bottom row of the share sheet (where Copy Link lives)
+                    # Coordinates based on 1440x3120 but safe for most aspect ratios
+                    self._adb.swipe(1200, 2800, 400, 2800, duration_ms=500)
+                    time.sleep(2)
+            
+            # Strategy B: Vertical Scroll Fallback (if the sheet itself needs expansion)
+            if not found_copy_link:
+                logger.warning("'Copy link' still not found. Trying vertical expansion scroll...")
                 self._adb.swipe(720, 2400, 720, 1800, duration_ms=300)
                 time.sleep(2)
-                if not self._tap_by_text_xml("Copy link", timeout=WAIT_SHORT, exact_match=False):
-                    logger.warning("'Copy link' still not found. Tapping fallback coordinate.")
-                    self._adb.tap(179, 2930)
+                if self._tap_by_text_xml("Copy link", timeout=WAIT_SHORT, exact_match=False):
+                    found_copy_link = True
+
+            # Strategy C: Resolution-Aware Coordinate Fallback
+            if not found_copy_link:
+                width = 1080 # Default
+                height = 1920
+                try:
+                    size = self.driver.get_window_size()
+                    width, height = size['width'], size['height']
+                except: pass
+                
+                logger.warning(f"Strategy C: Fallback to coordinate for {width}x{height}")
+                if width > 1200: # High Res (1440-like)
+                    # Tapping the typical 4th position in a large reshare row
+                    self._adb.tap(1060, 2730)
+                else: # Standard Res (1080-like)
+                    self._adb.tap(800, 1850)
+            
             time.sleep(WAIT_MEDIUM)
             self._save_debug_state("shortcode_05_link_copied")
             

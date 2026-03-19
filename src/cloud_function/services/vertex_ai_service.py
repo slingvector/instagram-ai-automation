@@ -2,9 +2,33 @@ from google import genai
 from google.genai import types
 import json
 import logging
-from typing import Dict, Any
+import re
+from typing import Dict, Any, List, Optional
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+# --- Pydantic Schemas for Structured AI Outputs ---
+
+class WordTimestamp(BaseModel):
+    word: str
+    start: float
+    end: float
+
+class SentimentCluster(BaseModel):
+    start: float
+    end: float
+    sentiment: str
+    text_emojis: str
+    reaction_pool: str
+    burst_count: int
+    intensity: float
+
+class VideoTranscription(BaseModel):
+    words: List[WordTimestamp]
+    sentiment_clusters: List[SentimentCluster]
+
+# --- Service Class ---
 
 class VertexAIService:
     """
@@ -17,29 +41,143 @@ class VertexAIService:
         try:
             # Initialize the modern python SDK
             self.client = genai.Client(vertexai=True, project=self.project_id, location=self.location)
+            self.prompts = self._load_prompts()
             logger.info("Vertex AI (google-genai) Service initialized.")
         except Exception as e:
             logger.error(f"Failed to initialize Vertex AI: {e}")
             raise
+
+    def _load_prompts(self) -> Dict[str, str]:
+        """Loads prompt templates from config/ai_prompts.yaml."""
+        import yaml
+        import os
+        config_path = os.path.join(os.getcwd(), "config", "ai_prompts.yaml")
+        if not os.path.exists(config_path):
+            logger.warning(f"AI-Prompts: Config not found at {config_path}. Falling back to internal defaults.")
+            return {}
+        try:
+            with open(config_path, "r") as f:
+                return yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.error(f"Failed to load AI prompts: {e}")
+            return {}
+
+    def _close_truncated_json(self, text: str) -> str:
+        """
+        Attempts to close a truncated JSON string by appending required brackets/braces.
+        """
+        text = text.strip()
+        if not text:
+            return "{}"
+
+        # Remove trailing commas that would break parsing
+        text = re.sub(r',\s*$', '', text)
+        
+        stack = []
+        i = 0
+        in_string = False
+        while i < len(text):
+            char = text[i]
+            if char == '"' and (i == 0 or text[i-1] != '\\'):
+                in_string = not in_string
+            elif not in_string:
+                if char == '{':
+                    stack.append('}')
+                elif char == '[':
+                    stack.append(']')
+                elif char == '}':
+                    if stack and stack[-1] == '}':
+                        stack.pop()
+                elif char == ']':
+                    if stack and stack[-1] == ']':
+                        stack.pop()
+            i += 1
+        
+        # Close open string if truncated inside one
+        if in_string:
+            text += '"'
+            
+        # Append needed closing tokens in reverse order
+        while stack:
+            text += stack.pop()
+            
+        return text
+
+    def _safe_json_parse(self, text: str) -> Dict[str, Any]:
+        """
+        Cleans and parses JSON from LLM outputs, handling markdown blocks,
+        trailing commas, and other common malformations.
+        """
+        if not text:
+            return {}
+        
+        cleaned = text.strip()
+        
+        # 1. Remove Markdown Fencing
+        if cleaned.startswith("```"):
+            # Find the first newline and last ```
+            lines = cleaned.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
+            
+        # 2. Basic cleaning (trailing commas in objects/arrays)
+        import re
+        # Remove trailing commas before closing braces/brackets
+        cleaned = re.sub(r',\s*([\]}])', r'\1', cleaned)
+        
+        # 3. Handle single-quote hallucinations (convert to double quotes)
+        # This is risky but often necessary if the model ignores the JSON instruction
+        # We only do it if the initial parse fails
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            try:
+                # Attempt to replace single quotes with double quotes around keys/values
+                # Very basic heuristic: 'key': 'value' -> "key": "value"
+                hard_cleaned = re.sub(r"'(\w+)'\s*:", r'"\1":', cleaned)
+                hard_cleaned = re.sub(r":\s*'([^']*)'", r': "\1"', hard_cleaned)
+                return json.loads(hard_cleaned)
+            except Exception:
+                try:
+                    # Final attempt: try closing a truncated JSON
+                    recovered = self._close_truncated_json(hard_cleaned)
+                    return json.loads(recovered)
+                except Exception as inner_e:
+                    logger.error(f"Safe JSON Parse failed even after cleaning & recovery. Raw output was: {text[:500]}...")
+                    raise inner_e
+
+    def _generate_with_retry(self, model: str, contents: Any, config: Any, max_retries: int = 3) -> Dict[str, Any]:
+        """
+        Calls Gemini generate_content with retries and safe JSON parsing.
+        """
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config
+                )
+                return self._safe_json_parse(response.text)
+            except Exception as e:
+                last_error = e
+                logger.warning(f"AI Attempt {attempt + 1}/{max_retries} failed: {e}. Retrying...")
+                import time
+                time.sleep(2 ** attempt) # Exponential backoff
+        
+        if last_error:
+            raise last_error
+        raise Exception("AI failed to generate response after multiple retries.")
 
     def analyze_video(self, gcs_video_uri: str) -> Dict[str, Any]:
         """
         Sends the GCS Video URI to Gemini 1.5 Flash for analysis.
         Returns a structured JSON dictionary containing extracted viral metadata.
         """
-        prompt = (
-            "You are an expert social media copywriter and viral content strategist. Watch the attached video. "
-            "Do not just summarize it blindly. Transform it into a high-retention storytelling asset. "
-            "Follow these steps:\n"
-            "1. Extract the core raw facts and the most shocking/interesting element.\n"
-            "2. Write a high-retention 'caption' that features multi-sentence storytelling. Move away from 1-liners: start with a strong curiosity hook, "
-            "tell an engaging story providing context, naturally bake in 3-5 secondary SEO keywords into the text. End with a compelling Call to Action (CTA) "
-            "directing viewers to click the link in our bio (e.g., 'Check the link in our bio for 70% off NordVPN!' or 'Read the full uncensored report at the link in our bio!').\n"
-            "3. Generate a list of exactly 3-5 highly-targeted 'power tags' for the 'hashtags' array. All hashtags MUST start with the '#' symbol (e.g. '#viral'). Do NOT place any hashtags inside the main 'caption' text.\n"
-            "4. Write a punchy 'burn_in_text' (max 5 words) to act as on-screen text overlay that forces the viewer to stop scrolling.\n\n"
-            "Provide the output in pure JSON format with the keys: 'caption' (no hashtags here), 'hashtags' (as list of strings WITH the # prefix), and 'burn_in_text'.\n"
-            "Respond ONLY with valid JSON. Do not include markdown blocks like ```json."
-        )
+        prompt = self.prompts.get("video_analysis", "You are an expert strategist. Analyze the video and provide JSON with 'caption', 'hashtags', 'burn_in_text'.")
 
         try:
             logger.info(f"Sending video {gcs_video_uri} to Vertex AI for analysis...")
@@ -47,28 +185,20 @@ class VertexAIService:
             # The new genai SDK expects types.Part.from_uri rather than Part.from_uri
             video_part = types.Part.from_uri(file_uri=gcs_video_uri, mime_type="video/mp4")
             
-            response = self.client.models.generate_content(
+            metadata = self._generate_with_retry(
                 model='gemini-2.0-flash-001',
                 contents=[video_part, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.7, 
                     max_output_tokens=800
-                ),
+                )
             )
             
-            response_text = response.text.strip()
-            # Clean up potential markdown formatting if model ignores instruction
-            if response_text.startswith("```json"):
-                response_text = response_text.replace("```json", "").replace("```", "").strip()
-            elif response_text.startswith("```"):
-                response_text = response_text.replace("```", "").strip()
-                
-            metadata = json.loads(response_text)
             logger.info("Successfully received and parsed Vertex AI metadata.")
             return metadata
             
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse Vertex AI response as JSON: {e}\nRaw Response: {response.text}")
+            logger.error(f"Failed to parse Vertex AI response as JSON: {e}")
             raise
         except Exception as e:
             logger.error(f"Vertex AI API call failed: {e}")
@@ -101,24 +231,21 @@ class VertexAIService:
         Uses Gemini 2.0 to detect the Primary Subject/ROI in the video.
         Uses structured JSON output for robustness.
         """
-        prompt = (
-            "Analyze this video clip. Identify the 'Primary Subject' that an audience would focus on (e.g., the athlete, the car, the presenter). "
-            "Return the normalized bounding box coordinates for this subject at the start, middle, and end of the clip. "
-            "Respond ONLY with a JSON object: {\"roi\": {\"ymin\": 0, \"xmin\": 0, \"ymax\": 1000, \"xmax\": 1000}, \"tracking_notes\": \"string\"}"
-        )
+        prompt = self.prompts.get("roi_detection", "Analyze this video clip and identify the ROI. Respond with JSON: {\"roi\": {...}}")
         try:
             logger.info(f"AI-ROI: Analyzing visual subject in {gcs_video_uri}...")
+            # The new genai SDK expects types.Part.from_uri rather than Part.from_uri
             video_part = types.Part.from_uri(file_uri=gcs_video_uri, mime_type="video/mp4")
             
-            response = self.client.models.generate_content(
+            return self._generate_with_retry(
                 model='gemini-2.0-flash-001',
                 contents=[video_part, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.0,
+                    max_output_tokens=500,
                     response_mime_type="application/json"
-                ),
+                )
             )
-            return json.loads(response.text)
         except Exception as e:
             logger.error(f"AI-ROI analysis failed: {e}")
             return {"roi": {"ymin": 0, "xmin": 0, "ymax": 1000, "xmax": 1000}, "error": str(e)}
@@ -127,59 +254,42 @@ class VertexAIService:
         Uses Gemini 2.0 to generate word-level transcription with timestamps.
         Returns JSON: {"words": [{"word": "Hello", "start": 0.5, "end": 0.8}, ...]}
         """
-        prompt = (
-            "Analyze the emotional 'vibe' and visual sentiment of this video. "
-            "1. Transcribe any spoken words with precise timestamps. "
-            "2. CRITICAL: Segment the ENTIRE video into 'sentiment_clusters' (approx 3-5 seconds each), covering the total duration. "
-            "For EACH cluster (even if no words are spoken), you MUST provide:\n"
-            "   - 'start' and 'end' timestamps (seconds).\n"
-            "   - 'text_emojis': 2-3 emojis reflecting the vibe.\n"
-            "   - 'reaction_pool': A string of 5-10 distinct emojis for 'burst' effects.\n"
-            "   - 'burst_count': Integer (3-8) for simultaneous pop-ups.\n"
-            "   - 'intensity': Float (0.0 to 1.0).\n\n"
-            "Respond ONLY with a JSON object in this format:\n"
-            "{\"words\": [{\"word\": \"text\", \"start\": 0.0, \"end\": 0.5}], "
-            "\"sentiment_clusters\": [{\"start\": 0.0, \"end\": 3.0, \"text_emojis\": \"🔥🚀\", \"reaction_pool\": \"🔥🚀💸💰💎✨\", \"burst_count\": 5, \"intensity\": 0.9}]}"
-        )
+        prompt = self.prompts.get("transcription_and_vibe", "Analyze the video. Transcribe words and segment into sentiment clusters. Respond with JSON.")
         try:
             logger.info(f"AI-Transcriber: Generating word-level sync for {gcs_video_uri}...")
+            # The new genai SDK expects types.Part.from_uri rather than Part.from_uri
             video_part = types.Part.from_uri(file_uri=gcs_video_uri, mime_type="video/mp4")
             
-            response = self.client.models.generate_content(
+            result = self.client.models.generate_content(
                 model='gemini-2.0-flash-001',
                 contents=[video_part, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.0,
-                    response_mime_type="application/json"
-                ),
+                    max_output_tokens=2048,
+                    response_mime_type="application/json",
+                    response_schema=VideoTranscription,
+                )
             )
             
-            result = json.loads(response.text)
-            logger.info(f"AI-Transcriber: Received keys: {list(result.keys())}")
-            if "sentiment_clusters" in result:
-                logger.info(f"AI-Transcriber: Found {len(result['sentiment_clusters'])} sentiment clusters.")
-            else:
-                logger.warning("AI-Transcriber: MISSING sentiment_clusters in response!")
-            return result
+            # The SDK returns the parsed response text (valid JSON)
+            import json
+            final_data = json.loads(result.text)
+            
+            logger.info(f"AI-Transcriber: Received keys: {list(final_data.keys())}")
+            if "sentiment_clusters" in final_data:
+                logger.info(f"AI-Transcriber: Found {len(final_data['sentiment_clusters'])} sentiment clusters.")
+            return final_data
         except Exception as e:
             logger.error(f"AI-Transcriber failed: {e}")
-            return {"words": [], "error": str(e)}
+            return {"words": [], "sentiment_clusters": [], "error": str(e)}
 
     def is_relevant_content(self, text: str, niche: str) -> bool:
         """
         Uses Gemini to determine if a piece of text (caption/title) is 
         relevant to the target niche and is NOT an advertisement or spam.
         """
-        prompt = (
-            f"You are a content quality filter for a geopolitics and global news page. "
-            f"Analyze the following text and determine if it is relevant to the '{niche}' niche. "
-            "Also, check if it is a promotional advertisement (e.g., VPNs, gaming, products) or low-quality spam.\n\n"
-            "Rules:\n"
-            "- If it is purely about global events, policy, conflict, or history related to the niche: RELEVANT\n"
-            "- If it is an ad, promotional, or completely unrelated: IRRELEVANT\n\n"
-            f"Text: \"{text}\"\n\n"
-            "Respond ONLY with 'RELEVANT' or 'IRRELEVANT'."
-        )
+        template = self.prompts.get("relevance_filter", "Determine if '{text}' is relevant to '{niche}'. Respond RELEVANT or IRRELEVANT.")
+        prompt = template.format(text=text, niche=niche)
 
         try:
             display_text = text[:50] if text else "None"

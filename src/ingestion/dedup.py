@@ -25,10 +25,21 @@ DB_PATH = Path(__file__).parents[2] / "data" / "dedup.db"
 PHASH_THRESHOLD = 8   # Hamming distance — images within this distance are considered duplicates
 
 
-def _canonical_url(url: str) -> str:
+def canonical_url(url: str) -> str:
     """Strip tracking params and fragments for stable dedup key."""
+    if not url:
+        return ""
     p = urlparse(url)
-    return urlunparse((p.scheme, p.netloc, p.path, '', '', ''))
+    from urllib.parse import parse_qsl, urlencode
+    
+    # Essential query params to keep
+    KEEP_PARAMS = {'v', 'id', 'shortcode'}
+    
+    query_params = parse_qsl(p.query)
+    clean_query = urlencode([(k, v) for k, v in query_params if k.lower() in KEEP_PARAMS])
+    
+    # Canonical components: scheme, netloc, path, params (always empty in modern URLs), query, fragment (empty)
+    return urlunparse((p.scheme, p.netloc, p.path, '', clean_query, ''))
 
 
 def _sha256(s: str) -> str:

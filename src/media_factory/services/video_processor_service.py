@@ -6,11 +6,11 @@ import os
 from google.cloud import storage
 
 from src.ingestion.services.digital_passport_service import DigitalPassportService
-from .ai_lens import AILens
-from ..styles.style_factory import StyleFactory
-from ..styles.template_manager import TemplateManager
-from ..utils.ass_generator import ASSGenerator
-from ...cloud_function.services.vertex_ai_service import VertexAIService
+from src.media_factory.services.ai_lens import AILens
+from src.media_factory.styles.style_factory import StyleFactory
+from src.media_factory.styles.template_manager import TemplateManager
+from src.media_factory.utils.ass_generator import ASSGenerator
+from src.cloud_function.services.vertex_ai_service import VertexAIService
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +34,9 @@ class VideoProcessorService:
     def _download_blob(self, gcs_uri: str, local_path: str):
         """Downloads a blob from a 'gs://...' URI to a local path."""
         # gs://bucket_name/path/to/object
-        bucket_part = gcs_uri.split("gs://")[1]
-        bucket_name = bucket_part.split("/")[0]
-        blob_name = "/".join(bucket_part.split("/")[1:])
+        bucket_part = gcs_uri.split("gs://", 1)[1]
+        bucket_name = bucket_part.split("/", 1)[0]
+        blob_name = bucket_part.split("/", 1)[1]
         
         bucket = self.storage_client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
@@ -94,9 +94,9 @@ class VideoProcessorService:
             
             style_template = StyleFactory.get_style(niche, font_path)
             
-            # 3. Generate Kinetic Typography (ASS)
+            # 3. Generate Kinetic Typography (ASS) & Burst Manifest
             ass_path = os.path.join(tmp_dir, f"captions_{job_id}.ass")
-            self.ass_generator.generate(transcription, ass_path, template=template, headline=text)
+            _, burst_manifest = self.ass_generator.generate(transcription, ass_path, template=template, headline=text)
 
             # 4. Apply Multi-Pass Rendering
             logger.info(f"Ultra-Pro v2: Applying {style_template.__class__.__name__} with '{template_id}' template...")
@@ -110,12 +110,13 @@ class VideoProcessorService:
                 width = int(video_stream['width']) if video_stream else 1920
                 height = int(video_stream['height']) if video_stream else 1080
                 
-                # Apply Style with ROI, Transcription, ASS path, Audio Peaks, Input Dimensions and Template
+                # Apply Style with ROI, Transcription, ASS path, Burst Manifest, Audio Peaks, Input Dimensions and Template
                 video_out = style_template.apply(
                     input_stream, text, duration, 
                     roi=roi, 
                     transcription_data=transcription, 
                     ass_path=ass_path, 
+                    burst_manifest=burst_manifest,
                     audio_peaks=audio_peaks,
                     pump_intensity=template.get("pump_intensity", 1.0),
                     width=width,
@@ -136,6 +137,7 @@ class VideoProcessorService:
                 (
                     output_stream
                     .overwrite_output()
+                    .global_args('-nostdin')
                     .run(capture_stdout=True, capture_stderr=True)
                 )
             except ffmpeg.Error as e:

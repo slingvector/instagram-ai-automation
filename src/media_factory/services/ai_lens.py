@@ -51,7 +51,7 @@ class AILens:
             # For a more robust "beat" detection, we look for relative spikes.
             # Simplified approach: use silent/noise detection to find transients
             cmd_transients = [
-                "ffmpeg", "-i", local_path,
+                "ffmpeg", "-nostdin", "-i", local_path,
                 "-af", "silencedetect=n=-30dB:d=0.1",
                 "-f", "null", "-"
             ]

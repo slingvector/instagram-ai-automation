@@ -27,6 +27,8 @@ google-cloud-firestore>=2.14.0
 google-cloud-storage>=2.14.0
 google-generativeai>=0.5.0
 google-cloud-logging>=3.8.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
 
 # ── Appium / Android automation ──────────────────────────────────────────────
 Appium-Python-Client>=3.0.0
@@ -34,3 +36,14 @@ selenium>=4.0.0
 
 # ── Web3 & Blockchain (Phase 3) ──────────────────────────────────────────────
 web3>=6.15.0
+
+# ── Media Processing & Data Science ─────────────────────────────────────────
+ffmpeg-python>=0.2.0
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+opencv-python>=4.8.0
+
+# ── AI Engines ──────────────────────────────────────────────────────────────
+openai>=1.0.0
+google-cloud-aiplatform>=1.38.0

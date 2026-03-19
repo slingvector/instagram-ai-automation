@@ -160,11 +160,47 @@ class PreFlightDiagnostic:
         except Exception as e:
             return ('Database', (False, f"DB Error: {str(e)}"))
 
+    def check_docker(self):
+        """Verify Docker daemon and critical MCR containers."""
+        if not shutil.which("docker"):
+            return ('Docker', (False, "Docker CLI not found in PATH"))
+            
+        try:
+            # Check if daemon is running
+            subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=5, check=True)
+            
+            # Check for specific MCR containers if compose files exist
+            containers_to_check = ["mcr-ingestion"]
+            if os.path.exists("docker-compose.appium.yml"):
+                containers_to_check.append("mcr-appium")
+                
+            status_parts = ["Daemon OK"]
+            
+            # Use docker ps to check for running containers
+            cmd = ["docker", "ps", "--format", "{{.Names}}:{{.Status}}"]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            running_containers = {line.split(':')[0]: line.split(':')[1] for line in result.stdout.strip().split('\n') if ':' in line}
+            
+            for container in containers_to_check:
+                if container in running_containers:
+                    status_parts.append(f"{container} OK")
+                else:
+                    # Don't fail the whole check if containers aren't running yet, 
+                    # but report it. bulk_post might be starting them.
+                    status_parts.append(f"{container} NOT RUNNING")
+            
+            return ('Docker', (True, " | ".join(status_parts)))
+        except subprocess.CalledProcessError:
+            return ('Docker', (False, "Docker daemon not reachable (is Docker Desktop running?)"))
+        except Exception as e:
+            return ('Docker', (False, f"Docker Error: {str(e)}"))
+
     def run_all(self):
         """Run all diagnostic checks in parallel."""
         checks = [
             self.check_adb,
             self.check_appium,
+            self.check_docker,
             self.check_gcp,
             self.check_dependencies,
             self.check_database

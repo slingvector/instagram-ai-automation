@@ -1,0 +1,44 @@
+# config/cross_platform.yaml
+
+# Map of platform -> niches -> target accounts/hashtags/queries
+# Used by UC4 (Cross-Platform Adapter) to find viral content outside of Instagram.
+# REFACTORED for Milestone 10: Performance Scaling.
+
+youtube_shorts:
+  sports:
+    - "ESPN" 
+    - "House of Highlights"
+    - "ICC"
+    - "BWF TV"
+    - "Volleyball World"
+  ai_tech:
+    - "Matt Wolfe"
+    - "AI Explained"
+    - "Fireship"
+  finance:
+    - "Graham Stephan"
+    - "Andrei Jikh"
+  fashion:
+    - "Vogue"
+    - "Wisdm"
+  travel:
+    - "Beautiful Destinations"
+    - "Kara and Nate"
+
+snapchat_spotlight:
+  travel:
+    - "travel_vibes"
+  fashion:
+    - "fashion_forward"
+
+twitter:
+  sports:
+    - "BleacherReport"
+    - "espn"
+    - "ICC"
+  ai_news:
+    - "rowancheung"
+    - "bindureddy"
+  finance:
+    - "unusual_whales"
+    - "WatcherGuru"

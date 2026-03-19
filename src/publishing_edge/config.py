@@ -7,7 +7,7 @@ load_dotenv()
 BASE_DIR = Path(__file__).parent.parent.parent
 
 # Appium / ADB
-APPIUM_HOST = os.getenv("APPIUM_HOST", "http://127.0.0.1:4723/wd/hub")
+APPIUM_HOST = os.getenv("APPIUM_HOST", "http://127.0.0.1:4723").replace("/wd/hub", "").rstrip("/")
 ANDROID_HOME = os.getenv("ANDROID_HOME", "/Users/cortex/Library/Android/sdk")
 DEVICE_UDID = os.getenv("DEVICE_UDID", "")  # blank = auto-detect first available device
 INSTAGRAM_PACKAGE = os.getenv("INSTAGRAM_PACKAGE", "com.instagram.android")

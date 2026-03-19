@@ -1,6 +1,7 @@
 import yaml
 import os
 import logging
+import random
 from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,6 @@ class TemplateManager:
         AI-ready logic to map a niche string to the best matching template ID.
         Uses randomized pooling for aesthetic variety.
         """
-        import random
         niche = niche.lower()
         
         # Define pools for each niche category

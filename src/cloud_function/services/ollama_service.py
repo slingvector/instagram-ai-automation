@@ -12,7 +12,7 @@ class OllamaService:
     Since Ollama Vision models are slow and heavy for full videos, this text-based
     fallback generates high-retention copy purely from the video's title and metadata.
     """
-    def __init__(self, host: str = "http://localhost:11434", model: str = "mistral"):
+    def __init__(self, host: str = "http://localhost:11434", model: str = "llama3.2"):
         self.host = host
         self.model = model
         

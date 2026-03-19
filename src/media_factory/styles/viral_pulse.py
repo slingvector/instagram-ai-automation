@@ -1,24 +1,39 @@
 import ffmpeg
-from .base_style import BaseStyle
+from typing import Any
+from src.media_factory.styles.base_style import BaseStyle
 
 class ViralPulse(BaseStyle):
     """
     High-energy style with hyper-saturation, neon tints, and loud typography.
     Best for: Sports, Tech News, Stocks.
     """
-    def apply(self, input_stream, text: str, duration: float, roi: dict = None, 
-              transcription_data: dict = None, ass_path: str = None, 
-              audio_peaks: list = None, pump_intensity: float = 1.0,
+    def apply(self, input_stream, text: str, duration: float, roi: Any = None, 
+              transcription_data: Any = None, ass_path: Any = None, 
+              burst_manifest: Any = None,
+              audio_peaks: Any = None, pump_intensity: float = 1.0,
               width: int = 1920, height: int = 1080,
-              template: dict = None):
+              template: Any = None):
+        # 0. Split input for multi-branch usage
+        v1 = input_stream.video.split()
+        v2 = input_stream.video.split()
+        # Note: In ffmpeg-python, calling .split() twice on the same stream creates two branches
+        # Or better: use the split filter explicitly if needed, but for simplicity:
+        v1 = input_stream.video
+        v2 = input_stream.video
+        # Wait, if I use the same stream twice in different filters, ffmpeg-python handles the split.
+        # However, to be explicit and avoid issues:
+        split = input_stream.video.filter('split', 2)
+        v1 = split[0]
+        v2 = split[1]
+
         # 1. Background (9:16 blurred)
-        bg = self.get_916_background(input_stream.video)
+        bg = self.get_916_background(v1)
         
         # 2. Viral Grading (Hyper-saturation or Template-driven)
         if template:
-            graded = self.apply_grading_from_template(input_stream.video, template)
+            graded = self.apply_grading_from_template(v2, template)
         else:
-            graded = self.apply_viral_grading(input_stream.video)
+            graded = self.apply_viral_grading(v2)
         
         # 3. Dynamic ROI Framing
         framed = self.apply_roi_framing(graded, roi, iw=width, ih=height)
@@ -29,7 +44,12 @@ class ViralPulse(BaseStyle):
         # 5. Audio-Reactive "Pump" (Novelty signal)
         out = self.apply_audio_pump(out, audio_peaks, intensity=pump_intensity)
 
-        # 6. Kinetic Typography (ASS) - HEADLINE + CAPTIONS consolidated
+        # 6. High-Fidelity Emoji Overlays (Sprite Engine)
+        if burst_manifest:
+            out = self.apply_emoji_overlays(out, burst_manifest, audio_peaks=audio_peaks)
+            
+        # 7. Kinetic Typography (ASS) - HEADLINE + CAPTIONS consolidated
+        # Applied LAST to ensure text stays on top of emojis
         if ass_path:
             out = self.apply_ass_subtitles(out, ass_path)
         else:

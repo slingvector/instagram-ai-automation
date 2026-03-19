@@ -1,8 +1,11 @@
 import ffmpeg
 import os
 import logging
+import random
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, List
+
+from ..services.emoji_sprite_service import EmojiSpriteService
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +18,10 @@ class BaseStyle(ABC):
         self.font_path = font_path
 
     @abstractmethod
-    def apply(self, input_stream, text: str, duration: float, roi: dict = None, 
-              transcription_data: dict = None, ass_path: str = None, 
-              audio_peaks: list = None, pump_intensity: float = 1.0):
+    def apply(self, input_stream, text: str, duration: float, roi: Any = None, 
+              transcription_data: Any = None, ass_path: Any = None, 
+              burst_manifest: Any = None,
+              audio_peaks: List[float] = None, pump_intensity: float = 1.0):
         """
         Applies the style-specific filter graph to the input stream.
         """
@@ -117,12 +121,21 @@ class BaseStyle(ABC):
     def apply_ass_subtitles(self, stream, ass_path: str):
         """
         Renders high-performance kinetic typography using the .ass file.
+        Uses the 'subtitles' filter with a local fontsdir if available to 
+        ensure cross-platform emoji support (e.g. Noto Color Emoji).
         """
         if not os.path.exists(ass_path):
             logger.warning(f"ASS file not found: {ass_path}. Skipping.")
             return stream
             
-        return stream.filter('ass', filename=ass_path)
+        # Check for local project fonts directory (useful for Mac/Windows dev)
+        fonts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "fonts"))
+        
+        if os.path.exists(fonts_dir):
+            # Using 'subtitles' instead of 'ass' filter because it supports 'fontsdir'
+            return stream.filter('subtitles', filename=ass_path, fontsdir=fonts_dir)
+        
+        return stream.filter('subtitles', filename=ass_path)
 
     def apply_audio_pump(self, stream, peaks: list[float], intensity: float = 1.0):
         """
@@ -144,6 +157,63 @@ class BaseStyle(ABC):
             expr += f" + {magnitude}*exp(-25*(time-{p})*(time-{p}))"
             
         return stream.filter('zoompan', z=expr, x='iw/2-(iw/zoom/2)', y='ih/2-(ih/zoom/2)', d=1, s='1080x1920', fps=30)
+
+    def apply_emoji_overlays(self, video_stream, burst_manifest: List[Dict[str, Any]], audio_peaks: List[float] = None):
+        """
+        v3.0 Organic UI Physics Engine:
+        1. Sine-Wave Wobble (Horizontal drift)
+        2. Quadratic Deceleration (Upward burst + Gravity)
+        3. Smooth Alpha Transitions
+        4. Spatial Margin Separation (Prevents spatial crowning/text overlap)
+        """
+        if not burst_manifest:
+            return video_stream
+
+        sprite_service = EmojiSpriteService()
+        peaks = audio_peaks or []
+
+        # Limit to top 20 bursts for high impact
+        active_bursts = sorted(burst_manifest, key=lambda x: x['start'])[:20]
+
+        out = video_stream
+        for i, burst in enumerate(active_bursts):
+            sprite_path = sprite_service.get_sprite_path(burst['char'])
+            if not sprite_path: continue
+
+            # 1. Base Variables
+            start = burst['start']
+            end = burst['end']
+            size = burst.get('size', 150)
+            
+            # 2. Physics
+            x0 = burst['x']
+            y0 = 1450 + random.randint(-50, 50)
+            vx = burst['dx'] * 1.5
+            wobble_freq = random.uniform(2.5, 4.5)
+            wobble_amp = random.randint(40, 90)
+            phase = random.uniform(0, 6.28)
+            initial_vy = random.uniform(700, 1000)
+            gravity = random.uniform(180, 280)
+            
+            x_math = f"{x0} + (t-{start})*{vx} + {wobble_amp}*sin({wobble_freq}*(t-{start}) + {phase})"
+            y_math = f"{y0} - (t-{start})*{initial_vy} + {gravity}*(t-{start})*(t-{start})"
+
+            # 3. UNIQUE Filter Chain (Node Jitter)
+            # We add a micro-jitter (0.001) to the size to ensure ffmpeg-python 
+            # treats this as a unique filter node and doesn't deduplicate it,
+            # which avoids the "multiple outgoing edges" DAG error.
+            jittered_size = size + (i * 0.001)
+            sprite = (
+                ffmpeg
+                .input(sprite_path)
+                .filter('scale', jittered_size, -1)
+                .filter('fade', type='out', start_time=end - 0.5, duration=0.5, alpha=1)
+            )
+            
+            # 4. Overlay
+            out = ffmpeg.overlay(out, sprite, x=x_math, y=y_math, enable=f"between(t,{start},{end})")
+
+        return out
 
     def apply_kinetic_captions(self, stream, transcription_data: dict):
         """

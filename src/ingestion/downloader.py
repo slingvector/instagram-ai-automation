@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from src.utils.yt_dlp_helper import get_yt_dlp_command
+from .downloaders import YTDLPDownloader, SnapTikDownloader, TikAPIDownloader, TikTokDownloaderBase
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class UniversalDownloader:
     - Engagement metadata pre-fetch (before committing to download)
     - Optional proxy support
     - Automatic output directory creation
+    - Pluggable TikTok download strategies
     """
 
     def __init__(
@@ -62,11 +64,24 @@ class UniversalDownloader:
         output_dir: Path,
         proxy: Optional[str] = None,
         cookies_file: Optional[Path] = None,  # e.g. instagram_cookies.txt for authed content
+        tiktok_policy: str = "ytdlp",        # ytdlp, snaptik, tikapi
     ):
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.proxy = proxy
         self.cookies_file = cookies_file
+        self.tiktok_policy = tiktok_policy
+        
+        # Instantiate TikTok plugin
+        self.tiktok_plugin = self._get_tiktok_plugin(tiktok_policy)
+
+    def _get_tiktok_plugin(self, policy: str) -> TikTokDownloaderBase:
+        if policy == "snaptik":
+            return SnapTikDownloader(self.output_dir, self.proxy)
+        elif policy == "tikapi":
+            return TikAPIDownloader(self.output_dir, self.proxy)
+        else:
+            return YTDLPDownloader(self.output_dir, self.proxy)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -74,24 +89,27 @@ class UniversalDownloader:
         """
         Fetch engagement metadata WITHOUT downloading the video.
         Use this to filter low-quality content before committing bandwidth.
-        Returns dict with: view_count, like_count, duration, title, id
+        Returns dict with: view_count, like_count, comment_count, duration, title, id, timestamp
         """
         cmd = self._base_cmd() + [
             "--skip-download",
-            "--print", "%(id)s|%(title)s|%(duration)s|%(view_count)s|%(like_count)s",
+            "--print", "%(id)s|%(title)s|%(duration)s|%(view_count)s|%(like_count)s|%(comment_count)s|%(timestamp)s",
             url,
         ]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if result.returncode == 0:
                 parts = result.stdout.strip().split("|")
-                if len(parts) >= 5:
+                if len(parts) >= 7:
+                    view_count = int(parts[3]) if parts[3].isdigit() else (int(parts[4]) * 20 if parts[4].isdigit() else 0)
                     return {
-                        "id":         parts[0],
-                        "title":      parts[1],
-                        "duration":   int(parts[2]) if parts[2].isdigit() else None,
-                        "view_count": int(parts[3]) if parts[3].isdigit() else 0,
-                        "like_count": int(parts[4]) if parts[4].isdigit() else 0,
+                        "id":               parts[0],
+                        "title":            parts[1],
+                        "duration":         int(parts[2]) if parts[2].isdigit() else None,
+                        "view_count":       view_count,
+                        "like_count":       int(parts[4]) if parts[4].isdigit() else 0,
+                        "comment_count":    int(parts[5]) if parts[5].isdigit() else 0,
+                        "upload_timestamp": int(parts[6]) if parts[6].isdigit() else None,
                     }
         except Exception as e:
             logger.debug(f"Metadata prefetch failed for {url}: {e}")
@@ -102,6 +120,18 @@ class UniversalDownloader:
         Download a video from any supported platform.
         Retries up to _MAX_RETRIES times on failure.
         """
+        # specialized TikTok handling
+        if "tiktok.com" in url:
+            for attempt in range(1, _MAX_RETRIES + 1):
+                res = self.tiktok_plugin.download(url, filename_hint)
+                if res.success:
+                    return DownloadResult(success=True, video_path=res.video_path)
+                logger.warning(f"TikTok download attempt {attempt}/{_MAX_RETRIES} failed: {res.error}")
+                if attempt < _MAX_RETRIES:
+                    time.sleep(_RETRY_DELAY_S * attempt)
+            return DownloadResult(success=False, error=f"All {_MAX_RETRIES} TikTok attempts failed")
+
+        # General platform handling (YouTube, IG, etc.)
         for attempt in range(1, _MAX_RETRIES + 1):
             result = self._attempt_download(url, filename_hint)
             if result.success:
@@ -122,8 +152,12 @@ class UniversalDownloader:
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _attempt_download(self, url: str, filename_hint: str) -> DownloadResult:
-        safe_hint = "".join(c for c in filename_hint if c.isalnum() or c in "-_")[:60]
-        output_template = str(self.output_dir / f"{safe_hint or '%(id)s'}.%(ext)s")
+        import hashlib
+        import re
+        # Sanitize hint: alphanumeric and underscores only
+        safe_hint = re.sub(r'[^\w\s-]', '', filename_hint or "reel").strip().replace(' ', '_')[:50]
+        url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+        output_template = str(self.output_dir / f"{url_hash}_{safe_hint or '%(id)s'}.%(ext)s")
 
         cmd = self._base_cmd() + [
             "--format",          _YT_DLP_FORMAT,
