@@ -13,3 +13,5 @@ To connect a new Android 11+ device wirelessly:
    ```bash
    docker compose -f docker-compose.appium.yml up -d
    ```
+
+6. **Clipboard Technical Details**: See [docs/CLIPBOARD_MECHANICS.md](docs/CLIPBOARD_MECHANICS.md) for how the bot handles cross-platform caption entry.

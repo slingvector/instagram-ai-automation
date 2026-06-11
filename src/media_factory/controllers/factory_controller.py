@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+from src.config import GCP_PROJECT_ID
 from src.media_factory.repositories.processed_job_repository import ProcessedJobRepository
 from src.media_factory.services.video_processor_service import VideoProcessorService
 
@@ -13,7 +14,7 @@ def process_job(job_id: str):
     """
     Controller logic to orchestrate downloading, processing, and uploading.
     """
-    project_id = os.environ.get("GCP_PROJECT_ID", "mcr-relay-1772228380")
+    project_id = GCP_PROJECT_ID
     
     try:
         # Initialize Services and Repositories

@@ -2,6 +2,8 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 
+from src.config import GCP_PROJECT_ID, GCS_BUCKET_RAW as GCS_BUCKET_NAME, GOOGLE_APPLICATION_CREDENTIALS
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -20,7 +22,3 @@ TARGET_INSTAGRAM_CHAT_URL = os.getenv("TARGET_INSTAGRAM_CHAT_URL", "https://www.
 PROXY_SERVER = os.getenv("PROXY_SERVER", None)
 HEADLESS = os.getenv("HEADLESS", "False").lower() == "true"
 
-# GCP Configuration
-GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "mcr-relay-1772228380")
-GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "mcr-relay-1772228380-raw-input")
-GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")

@@ -5,6 +5,7 @@ import uuid
 import os
 from google.cloud import storage
 
+from src.config import GCS_BUCKET_RAW, GCS_BUCKET_PROCESSED
 from src.ingestion.services.digital_passport_service import DigitalPassportService
 from src.media_factory.services.ai_lens import AILens
 from src.media_factory.styles.style_factory import StyleFactory
@@ -20,11 +21,11 @@ class VideoProcessorService:
     StyleFactory for niche-specific cinematic aesthetics.
     """
     def __init__(self, project_id: str,
-                 input_bucket_name: str = "mcr-relay-1772228380-raw-input",
-                 output_bucket_name: str = "mcr-relay-1772228380-processed-output"):
+                 input_bucket_name: str = "",
+                 output_bucket_name: str = ""):
         self.project_id = project_id
-        self.input_bucket = input_bucket_name
-        self.output_bucket = output_bucket_name
+        self.input_bucket = input_bucket_name or GCS_BUCKET_RAW
+        self.output_bucket = output_bucket_name or GCS_BUCKET_PROCESSED
         self.storage_client = storage.Client(project=self.project_id)
         self.ai_lens = AILens(self.project_id)
         self.vertex_ai = VertexAIService(self.project_id)

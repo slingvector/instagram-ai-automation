@@ -142,3 +142,4 @@ By default, the pipeline stages drafts in the Instagram app and waits.
   2. Search for `Appium`.
   3. Manually uninstall **"Appium Settings"**, **"Appium UiAutomator2 Server"**, and **"Appium UiAutomator2 Server Test"**.
   4. Rerun the Python Appium script. The backend will automatically push fresh, working copies of these apps back to the phone on the next connection attempt.
+- **Clipboard Failures:** See [docs/CLIPBOARD_MECHANICS.md](docs/CLIPBOARD_MECHANICS.md) for technical setup and troubleshooting of text entry via ADB.

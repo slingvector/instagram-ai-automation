@@ -18,7 +18,8 @@ class ImmersiveClassifier:
         "fpv_drone": ["fpv", "drone", "freestyle", "quadcopter", "betaflight"],
         "riding": ["bike", "motorcycle", "mtb", "dh", "downhill", "ride", "motovlog", "cycling"],
         "diving": ["diving", "surf", "underwater", "wave", "ocean", "sea", "scuba"],
-        "360_tiny_planet": ["360", "insta360", "tiny planet", "orbit", "reframe"]
+        "360_tiny_planet": ["360", "insta360", "tiny planet", "orbit", "reframe"],
+        "sports": ["nba", "nfl", "football", "soccer", "basketball", "highlights", "dunk", "goal", "touchdown", "slam dunk", "hoops", "sports"]
     }
 
     MOTION_KEYWORDS = ["fast", "insane", "speed", "crash", "jump", "flip", "adrenaline", "crazy", "unreal"]

@@ -1,0 +1,109 @@
+# Elite Run V4 Discovery Configuration
+# Target: 10k Accounts, 500 Reels
+# Filters: 100k Followers, 100k Likes OR (10k Likes + Comments)
+
+sources:
+- platform: instagram
+  type: creator
+  value: redbull
+  niche: adrenaline
+  filters:
+    min_followers: 100000
+    min_likes: 100000
+- platform: instagram
+  type: creator
+  value: gopro
+  niche: adrenaline
+  filters:
+    min_followers: 100000
+    min_likes: 100000
+- platform: instagram
+  type: creator
+  value: houseofhighlights
+  niche: sports
+  filters:
+    min_followers: 100000
+    min_likes: 100000
+- platform: instagram
+  type: creator
+  value: redbullskate
+- platform: instagram
+  type: creator
+  value: redbullbike
+- platform: instagram
+  type: creator
+  value: ufc_brasil
+- platform: instagram
+  type: creator
+  value: nfluk
+- platform: instagram
+  type: creator
+  value: f1photography
+- platform: instagram
+  type: creator
+  value: olympics_fiji
+- platform: instagram
+  type: creator
+  value: monsterenergy_uao
+- platform: instagram
+  type: creator
+  value: nikefootball
+- platform: instagram
+  type: creator
+  value: adidassport
+- platform: instagram
+  type: creator
+  value: pucking_highlights
+- platform: instagram
+  type: creator
+  value: surf_porn
+- platform: instagram
+  type: creator
+  value: snow_boarding_life
+- platform: instagram
+  type: creator
+  value: ufc
+  niche: adrenaline
+- platform: instagram
+  type: creator
+  value: nfl
+  niche: sports
+- platform: instagram
+  type: creator
+  value: f1
+  niche: adrenaline
+- platform: instagram
+  type: creator
+  value: olympics
+  niche: sports
+- platform: instagram
+  type: creator
+  value: dakarrally
+  niche: adrenaline
+- platform: instagram
+  type: creator
+  value: monsterenergy
+  niche: adrenaline
+- platform: instagram
+  type: creator
+  value: nike
+  niche: sports
+
+global_filters:
+  instagram:
+    min_followers: 100000
+    min_likes: 100000
+    min_likes_comments_sum: 10000  # Fallback: 10k likes and comments
+    min_like_rate: 0.02
+    strict_niche: true
+  tiktok:
+    min_followers: 100000
+    min_likes: 100000
+  youtube:
+    min_followers: 100000
+    min_views: 500000
+
+targeting:
+  accounts_goal: 10000
+  reels_goal: 500
+  priority: viral_engagement

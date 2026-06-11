@@ -7,14 +7,19 @@ processing pipeline (download → Media Factory → GCS → Firestore → Appium
 """
 from __future__ import annotations
 
+import math
+import yaml
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import StrEnum
+from pathlib import Path
 from typing import List, Optional
+from urllib.parse import urlparse, urlunparse
 
 
 # ── Account profiles ──────────────────────────────────────────────────────────
 
-class AccountProfile:
+class AccountProfile(StrEnum):
     """Logical posting account identifiers."""
     MAIN      = "main"         # General niches: fashion, travel, entertainment, sport, fun
     EXCLUSIVE = "exclusive"    # Explicit-content — private, fully isolated account
@@ -22,7 +27,7 @@ class AccountProfile:
 
 # ── Niche taxonomy ────────────────────────────────────────────────────────────
 
-class Niche:
+class Niche(StrEnum):
     FASHION       = "fashion"
     TRAVEL        = "travel"
     ENTERTAINMENT = "entertainment"
@@ -38,7 +43,7 @@ class Niche:
 
 # ── Platform identifiers ──────────────────────────────────────────────────────
 
-class Platform:
+class Platform(StrEnum):
     INSTAGRAM = "instagram"
     TIKTOK    = "tiktok"
     YOUTUBE   = "youtube"
@@ -52,11 +57,33 @@ class Platform:
 
 # ── Source types ──────────────────────────────────────────────────────────────
 
-class SourceType:
+class SourceType(StrEnum):
     DM             = "dm"             # UC1: Instagram DMs
     CREATOR        = "creator"        # UC2: Creator watchlist
     TRENDING       = "trending"       # UC3: Real-time trend monitor
     CROSS_PLATFORM = "cross_platform" # UC4: TikTok, YT Shorts, etc.
+
+
+# ── Cached config loading ────────────────────────────────────────────────────
+
+_CONFIG_CACHE: dict | None = None
+_CONFIG_PATH = Path("config/uvi_config.yaml")
+
+
+def _load_uvi_config() -> dict:
+    """Load UVI config from disk, cached after first call."""
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is not None:
+        return _CONFIG_CACHE
+    if _CONFIG_PATH.exists():
+        try:
+            with open(_CONFIG_PATH, "r") as f:
+                _CONFIG_CACHE = yaml.safe_load(f) or {}
+        except Exception:
+            _CONFIG_CACHE = {}
+    else:
+        _CONFIG_CACHE = {}
+    return _CONFIG_CACHE
 
 
 # ── Core data model ───────────────────────────────────────────────────────────
@@ -114,28 +141,17 @@ class ContentItem:
         if self.shortcode:
             return f"{self.platform}::{self.shortcode}"
         # Strip tracking params from URL
-        from urllib.parse import urlparse, urlunparse
         p = urlparse(self.url)
         return urlunparse((p.scheme, p.netloc, p.path, '', '', ''))
 
     def compute_engagement_score(self) -> float:
         """
         Weighted engagement score for content ranking/filtering.
-        Loads weights from yaml config if possible to avoid hardcoding.
+        Loads weights from cached yaml config.
         """
-        import yaml
-        from pathlib import Path
-        config_path = Path("config/uvi_config.yaml")
-        
-        weights = {"view": 0.1, "like": 1.0, "save": 5.0, "share": 3.0} # Fallbacks
-        
-        if config_path.exists():
-            try:
-                with open(config_path, "r") as f:
-                    cfg = yaml.safe_load(f)
-                    weights.update(cfg.get("engagement_weights", {}))
-            except Exception:
-                pass
+        cfg = _load_uvi_config()
+        weights = {"view": 0.1, "like": 1.0, "save": 5.0, "share": 3.0}  # Fallbacks
+        weights.update(cfg.get("engagement_weights", {}))
 
         score = (
             self.view_count  * weights["view"]  +
@@ -167,11 +183,9 @@ class SourceAdapter(ABC):
 
     def get_platform_config(self, platform: str) -> dict:
         """
-        Load platform-specific filters and enablement from uvi_config.yaml.
+        Load platform-specific filters and enablement from uvi_config.yaml (cached).
         """
-        import yaml
-        from pathlib import Path
-        config_path = Path("config/uvi_config.yaml")
+        cfg = _load_uvi_config()
 
         # Default fallbacks
         p_cfg = {
@@ -180,14 +194,7 @@ class SourceAdapter(ABC):
             "multiplier": 1.0,
             "baseline": 0.0
         }
-
-        if config_path.exists():
-            try:
-                with open(config_path, "r") as f:
-                    all_cfg = yaml.safe_load(f)
-                    p_cfg.update(all_cfg.get("platforms", {}).get(platform, {}))
-            except Exception:
-                pass
+        p_cfg.update(cfg.get("platforms", {}).get(platform, {}))
         return p_cfg
 
     def calculate_uvi(self, platform: str, raw_metric: float) -> float:
@@ -195,7 +202,6 @@ class SourceAdapter(ABC):
         Universal Virality Index (UVI) Calculation.
         Formula: log10(RawMetric * Multiplier) - Baseline
         """
-        import math
         p_cfg = self.get_platform_config(platform)
         
         if raw_metric <= 0:
@@ -216,3 +222,4 @@ class SourceAdapter(ABC):
         for item in new_items:
             dedup.register(item)
         return new_items
+

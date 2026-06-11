@@ -9,14 +9,16 @@ Now integrated with Immersive Adrenaline Intelligence.
 """
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import os
 import random
-import yaml
-import urllib.request
+import subprocess
 import urllib.error
+import urllib.request
 import xml.etree.ElementTree as ET
+
+import yaml
 from pathlib import Path
 from typing import List, Iterator, Dict, Any, Optional
 
@@ -50,10 +52,11 @@ class TrendingAdapter(SourceAdapter):
         
         # Initialize Vertex AI for semantic filtering (Planned for Phase 2)
         try:
-            from src.publishing_edge.config import GCP_PROJECT_ID
+            from src.config import GCP_PROJECT_ID
             from src.cloud_function.services.vertex_ai_service import VertexAIService
             self.ai = VertexAIService(project_id=GCP_PROJECT_ID)
-        except:
+        except Exception as e:
+            logger.debug(f"Vertex AI not available: {e}")
             self.ai = None
             
         self.proxy_helper = ProxyHelper()
@@ -160,7 +163,6 @@ class TrendingAdapter(SourceAdapter):
         ], proxy=proxy)
 
         try:
-            import subprocess
             proc = subprocess.run(yt_cmd, capture_output=True, text=True, timeout=90)
             if proc.returncode == 0:
                 for line in proc.stdout.strip().splitlines():
@@ -198,7 +200,8 @@ class TrendingAdapter(SourceAdapter):
                             self.dedup.register(item)
                             yield item
                             logger.info(f"🔥 Immersive Creator Discovery [Score: {v_score}]: {url}")
-                    except: continue
+                    except Exception:
+                        continue
         except Exception as e:
             logger.error(f"TikTok creator fetch failed: {e}")
         """Scrape TikTok for keywords. If broad_mode, skip deep metric filtering."""
@@ -215,7 +218,6 @@ class TrendingAdapter(SourceAdapter):
         min_comment_rate = p_filters.get("min_comment_rate", 0.0)
 
         try:
-            import subprocess
             proc = subprocess.run(yt_cmd, capture_output=True, text=True, timeout=90)
             if proc.returncode == 0:
                 for line in proc.stdout.strip().splitlines():
@@ -291,7 +293,8 @@ class TrendingAdapter(SourceAdapter):
                             logger.info(f"🔥 Immersive Discovery [Score: {v_score}, Cat: {immersive_meta['type']}]: {url}")
                         else:
                             logger.debug(f"Skipping duplicate TikTok item: {item.url}")
-                    except: continue
+                    except Exception:
+                        continue
         except Exception as e:
             logger.error(f"TikTok keyword fetch failed: {e}")
 
@@ -309,7 +312,6 @@ class TrendingAdapter(SourceAdapter):
         min_comment_rate = p_filters.get("min_comment_rate", 0.0)
 
         try:
-            import subprocess
             proc = subprocess.run(yt_cmd, capture_output=True, text=True, timeout=120)
             if proc.returncode == 0:
                 for line in proc.stdout.strip().splitlines():
@@ -389,7 +391,8 @@ class TrendingAdapter(SourceAdapter):
                                 logger.info(f"🔥 Immersive Discovery [Score: {v_score}, Cat: {immersive_meta['type']}]: {url}")
                         else:
                             logger.debug(f"Skipping duplicate YouTube item: {item.url}")
-                    except: continue
+                    except Exception:
+                        continue
         except Exception as e:
             logger.error(f"YouTube search fetch failed: {e}")
 
@@ -412,7 +415,6 @@ class TrendingAdapter(SourceAdapter):
         ], proxy=proxy)
         
         try:
-            import subprocess
             proc = subprocess.run(yt_cmd, capture_output=True, text=True, timeout=60)
             if proc.returncode == 0:
                 for line in proc.stdout.strip().splitlines():
@@ -470,7 +472,8 @@ class TrendingAdapter(SourceAdapter):
                                 logger.info(f"🔥 Immersive Discovery [Score: {v_score}, Cat: {immersive_meta['type']}]: {url}")
                             else:
                                 logger.debug(f"Skipping duplicate YouTube channel item: {item.url}")
-                    except: continue
+                    except Exception:
+                        continue
         except Exception as e:
             logger.error(f"YouTube channel fetch failed: {e}")
 
@@ -558,7 +561,8 @@ class TrendingAdapter(SourceAdapter):
         try:
             with opener.open(req, timeout=15) as response:
                 return response.read()
-        except: return b""
+        except Exception:
+            return b""
 
     def _fetch_instagram_hashtag(self, hashtag: str, min_likes: int, niche: str = None) -> Iterator[ContentItem]:
         # ... logic ...
@@ -600,4 +604,5 @@ class TrendingAdapter(SourceAdapter):
                 if title and link:
                     item = ContentItem(url=GENERIC_BROLL_URL, platform=Platform.WEB, source_type=self.source_type, title=title)
                     yield item
-        except: pass
+        except Exception:
+            pass

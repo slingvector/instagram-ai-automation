@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import firestore, storage
-from src.publishing_edge.config import APPIUM_HOST, DEVICE_UDID, GCP_PROJECT_ID, GCS_PROCESSED_BUCKET
+from src.config import GCP_PROJECT_ID, GCS_BUCKET_PROCESSED as GCS_PROCESSED_BUCKET
 from src.utils.yt_dlp_helper import get_yt_dlp_command
 
 logger = logging.getLogger(__name__)
@@ -18,72 +18,7 @@ class PreFlightDiagnostic:
     def __init__(self):
         self.results = {}
 
-    def check_adb(self):
-        """Verify ADB connectivity and specified device status."""
-        try:
-            cmd = ["adb", "devices"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            lines = result.stdout.strip().split('\n')[1:]
-            devices = [line.split('\t')[0] for line in lines if '\tdevice' in line]
-            
-            if not devices:
-                return ('ADB', (False, "No devices connected"))
-            elif DEVICE_UDID and DEVICE_UDID not in devices:
-                return ('ADB', (False, f"Device {DEVICE_UDID} not found in {devices}"))
-            else:
-                return ('ADB', (True, f"Found {len(devices)} device(s): {', '.join(devices)}"))
-        except Exception as e:
-            return ('ADB', (False, str(e)))
 
-    def deep_clean_device(self):
-        """Reset Appium on-device state to resolve instrumentation crashes."""
-        logger.warning("Initiating Deep-Clean of on-device Appium environment...")
-        commands = [
-            ["adb", "shell", "am", "force-stop", "io.appium.uiautomator2.server"],
-            ["adb", "shell", "am", "force-stop", "io.appium.uiautomator2.server.test"],
-            ["adb", "uninstall", "io.appium.uiautomator2.server"],
-            ["adb", "uninstall", "io.appium.uiautomator2.server.test"],
-            ["adb", "forward", "--remove-all"]
-        ]
-        for cmd in commands:
-            try:
-                subprocess.run(cmd, capture_output=True, timeout=10)
-            except:
-                pass
-
-    def check_appium(self):
-        """Ping Appium server with auto-discovery and deep-clean recovery."""
-        paths_to_try = ["/wd/hub/status", "/status"]
-        base_url = APPIUM_HOST.split("/wd/hub")[0].rstrip("/") if "/wd/hub" in APPIUM_HOST else APPIUM_HOST.rstrip("/")
-        
-        def attempt_ping():
-            errors = []
-            for path in paths_to_try:
-                url = f"{base_url}{path}"
-                try:
-                    response = requests.get(url, timeout=3)
-                    if response.status_code == 200:
-                        return True, f"Server active at {url}"
-                    errors.append(f"{path}: HTTP {response.status_code}")
-                except Exception as e:
-                    errors.append(f"{path}: {str(e)}")
-            return False, f"Appium unreachable. Tried: {'; '.join(errors)}"
-
-        # First Attempt
-        success, message = attempt_ping()
-        if success:
-            return ('Appium', (True, message))
-        
-        # Auto-Recovery Attempt
-        logger.info("Appium check failed. Attempting deep-clean recovery...")
-        self.deep_clean_device()
-        
-        # Final Attempt
-        success, message = attempt_ping()
-        if success:
-            return ('Appium', (True, f"{message} (Recovered via Deep-Clean)"))
-        
-        return ('Appium', (False, f"Critical Appium Failure: {message}"))
 
     def check_gcp(self):
         """Verify Firestore and GCS bucket access with retries."""
@@ -138,7 +73,7 @@ class PreFlightDiagnostic:
         try:
             subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=5)
             deps.append("ffmpeg OK")
-        except:
+        except Exception:
             deps.append("ffmpeg MISSING")
             
         success = all("OK" in d for d in deps)
@@ -169,10 +104,7 @@ class PreFlightDiagnostic:
             # Check if daemon is running
             subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=5, check=True)
             
-            # Check for specific MCR containers if compose files exist
             containers_to_check = ["mcr-ingestion"]
-            if os.path.exists("docker-compose.appium.yml"):
-                containers_to_check.append("mcr-appium")
                 
             status_parts = ["Daemon OK"]
             
@@ -198,8 +130,6 @@ class PreFlightDiagnostic:
     def run_all(self):
         """Run all diagnostic checks in parallel."""
         checks = [
-            self.check_adb,
-            self.check_appium,
             self.check_docker,
             self.check_gcp,
             self.check_dependencies,
