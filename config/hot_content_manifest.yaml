@@ -2,26 +2,6 @@ sources:
 - platform: instagram
   priority: high
   type: creator
-  value: adults_only_2.0
-  niche: hot-content
-- platform: instagram
-  priority: high
-  type: creator
-  value: luvtwerkbooty
-  niche: hot-content
-- platform: instagram
-  priority: high
-  type: creator
-  value: adult.fam
-  niche: hot-content
-- platform: instagram
-  priority: high
-  type: creator
-  value: ft.love.couples
-  niche: hot-content
-- platform: instagram
-  priority: high
-  type: creator
   value: iamsiddhi_1
   niche: hot-content
 - platform: instagram
@@ -32,22 +12,7 @@ sources:
 - platform: instagram
   priority: high
   type: creator
-  value: puneescort
-  niche: hot-content
-- platform: instagram
-  priority: high
-  type: creator
   value: strictly.for.adults
-  niche: hot-content
-- platform: instagram
-  priority: high
-  type: creator
-  value: whitegirlpoliticking
-  niche: hot-content
-- platform: instagram
-  priority: high
-  type: creator
-  value: nude_yogagirl
   niche: hot-content
 - platform: instagram
   priority: high
@@ -67,26 +32,6 @@ sources:
 - platform: instagram
   priority: high
   type: creator
-  value: naked.in.nature
-  niche: hot-content
-- platform: instagram
-  priority: high
-  type: creator
-  value: a.naked.girl
-  niche: hot-content
-- platform: instagram
-  priority: high
-  type: creator
-  value: our.naked.story
-  niche: hot-content
-- platform: instagram
-  priority: high
-  type: creator
-  value: naturistgirl
-  niche: hot-content
-- platform: instagram
-  priority: high
-  type: creator
   value: n_wanderings
   niche: hot-content
 - platform: instagram
@@ -99,7 +44,6 @@ sources:
   type: creator
   value: vritomartis
   niche: hot-content
-
 global_filters:
   instagram:
     media_type: reels
