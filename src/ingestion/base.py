@@ -11,7 +11,7 @@ import math
 import yaml
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlparse, urlunparse
@@ -19,7 +19,7 @@ from urllib.parse import urlparse, urlunparse
 
 # ── Account profiles ──────────────────────────────────────────────────────────
 
-class AccountProfile(StrEnum):
+class AccountProfile(str, Enum):
     """Logical posting account identifiers."""
     MAIN      = "main"         # General niches: fashion, travel, entertainment, sport, fun
     EXCLUSIVE = "exclusive"    # Explicit-content — private, fully isolated account
@@ -27,7 +27,7 @@ class AccountProfile(StrEnum):
 
 # ── Niche taxonomy ────────────────────────────────────────────────────────────
 
-class Niche(StrEnum):
+class Niche(str, Enum):
     FASHION       = "fashion"
     TRAVEL        = "travel"
     ENTERTAINMENT = "entertainment"
@@ -43,7 +43,7 @@ class Niche(StrEnum):
 
 # ── Platform identifiers ──────────────────────────────────────────────────────
 
-class Platform(StrEnum):
+class Platform(str, Enum):
     INSTAGRAM = "instagram"
     TIKTOK    = "tiktok"
     YOUTUBE   = "youtube"
@@ -57,7 +57,7 @@ class Platform(StrEnum):
 
 # ── Source types ──────────────────────────────────────────────────────────────
 
-class SourceType(StrEnum):
+class SourceType(str, Enum):
     DM             = "dm"             # UC1: Instagram DMs
     CREATOR        = "creator"        # UC2: Creator watchlist
     TRENDING       = "trending"       # UC3: Real-time trend monitor

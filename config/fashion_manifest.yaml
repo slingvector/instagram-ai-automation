@@ -1,9 +1,5 @@
 discovered_creators:
-- platform: instagram
-  priority: high
-  type: creator
-  value: bellahadid
-  niche: fashion
+
 - platform: instagram
   priority: high
   type: creator

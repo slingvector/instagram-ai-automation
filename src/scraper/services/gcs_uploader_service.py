@@ -30,6 +30,11 @@ class GCSUploaderService:
         unique_id = str(uuid.uuid4())[:8]
         filename = f"{unique_id}_{local_path_obj.name}"
         
+        # Rename the local file to match the GCS filename so the dashboard can serve it
+        new_local_path = local_path_obj.parent / filename
+        os.rename(local_path, new_local_path)
+        local_path = str(new_local_path)
+        
         logger.info(f"Uploading {filename} to GCS bucket {self.bucket_name} ...")
         blob = self.bucket.blob(f"reels/{filename}")
         blob.upload_from_filename(local_path, content_type="video/mp4", timeout=300)

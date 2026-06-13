@@ -18,3 +18,7 @@ artifacts/
 !requirements.txt
 !modernos-edge-agent-key.json
 !data/ig_readonly_session.json
+data/
+logs/
+.env
+

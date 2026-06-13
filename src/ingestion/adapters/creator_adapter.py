@@ -160,8 +160,10 @@ class CreatorAdapter(SourceAdapter):
                         tasks.append((niche, {"username": acc}))
                     elif isinstance(acc, dict):
                         tasks.append((niche, acc))
-                    
-            logger.info(f"Scanning {len(tasks)} creator profiles...")
+            
+            # Increase diversity by shuffling tasks
+            random.shuffle(tasks)
+            logger.info(f"Scanning {len(tasks)} creator profiles (shuffled for diversity)...")
 
             for niche, acc_info in tasks:
                 if "username" in acc_info:
@@ -217,7 +219,13 @@ class CreatorAdapter(SourceAdapter):
                     shortcodes = list(dict.fromkeys(shortcodes))
                     logger.info(f"Extracted {len(shortcodes)} shortcodes from @{username} (after scrolling)")
                     
+                    yielded_for_this_account = 0
+                    
                     for shortcode in shortcodes:
+                        if yielded_for_this_account >= 50:
+                            logger.info(f"Reached max limit of 50 reels for {display_name}, moving to next account.")
+                            break
+                            
                         reel_url = f"https://www.instagram.com/reel/{shortcode}/"
                         message_id = f"target::{display_name}::{shortcode}"
                         
@@ -242,6 +250,7 @@ class CreatorAdapter(SourceAdapter):
                             # In broad mode, we don't care about API metadata (views/likes) yet.
                             # We just want to populate the SCANNED queue.
                             yield temp_item
+                            yielded_for_this_account += 1
                             continue
                             
                         if shortcode in api_reels:
@@ -277,6 +286,7 @@ class CreatorAdapter(SourceAdapter):
                             # ONLY register in dedup if we are actually yielding it as a hit
                             self.dedup.register_dm(message_id, url, reel_url)
                             yield item
+                            yielded_for_this_account += 1
                             logger.info(f"✅ Found viral reel! {display_name}/{shortcode} (Views: {views}, Likes: {likes})")
                         else:
                             # Not viral enough. We DON'T register in dedup here so that if the user 

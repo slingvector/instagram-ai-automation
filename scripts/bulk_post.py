@@ -334,13 +334,21 @@ class BulkPosterStateMachine:
                     reel['ai_metadata'] = metadata
                     state = ReelState.CAPTIONED
                     
-                    # 🛑 PAUSE PIPELINE HERE: Wait for manual dashboard approval
-                    logger.info(f"{tag} ⏸️ Pausing pipeline for Dashboard manual approval.")
-                    return True, 0
+                    # AUTO-APPROVE: Skip manual dashboard wait for fast processing
+                    logger.info(f"{tag} ⏩ Auto-approving reel and bypassing dashboard pause.")
+                    # Automatically transition to JOB_CREATED logic
+                    job_id = self.job_repo.create_job(reel['gcs_uri'], reel['ai_metadata'])
+                    self.state_manager.update_state(url, ReelState.JOB_CREATED, job_id=job_id)
+                    reel['job_id'] = job_id
+                    state = ReelState.JOB_CREATED
                 else:
                     logger.info(f"{tag} Skipping Captioning: Metadata already exists.")
                     state = ReelState.CAPTIONED
-                    return True, 0 # Already captioned, waiting for approval
+                    # Ensure it transitions smoothly if it was already captioned
+                    job_id = self.job_repo.create_job(reel['gcs_uri'], reel['ai_metadata'])
+                    self.state_manager.update_state(url, ReelState.JOB_CREATED, job_id=job_id)
+                    reel['job_id'] = job_id
+                    state = ReelState.JOB_CREATED
             else:
                 # If we skipped it, we don't return. We only skip if state was already past CAPTIONED.
                 # Actually, if state was JOB_CREATED, it wouldn't enter this block, so we just pass.
@@ -402,8 +410,8 @@ class BulkPosterStateMachine:
                         self.uploader.download_file(processed_uri, local_processed_path)
                     
                     # 1. Attempt LocalSend (Primary Relay)
-                    logger.info(f"{tag} 🚀 Attempting LocalSend Relay to phone...")
-                    relay_success = self.localsend_service.push([local_processed_path])
+                    logger.info(f"{tag} 🚀 Bypassing LocalSend Relay to prevent hang...")
+                    relay_success = False
                     
                     if relay_success:
                         logger.info(f"{tag} ✅ Relayed to Phone via LocalSend!")
@@ -456,7 +464,7 @@ def run():
     parser.add_argument("--min-views", type=int, help="Minimum views for discovery")
     parser.add_argument("--clear-dedup-discovery", action="store_true", help="Clear the discovery dedup database")
     parser.add_argument("--skip-preflight", action="store_true", help="Skip hardware pre-flight checks")
-    parser.add_argument("--config", type=str, default="config/cricket_manifest.yaml", help="Path to discovery manifest YAML")
+    parser.add_argument("--config", type=str, default="config/hot_content_manifest.yaml", help="Path to discovery manifest YAML")
     parser.add_argument("--db", type=str, help="Path to isolated state database (SQLite)")
 
     args = parser.parse_args()

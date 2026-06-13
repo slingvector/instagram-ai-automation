@@ -74,15 +74,19 @@ class VertexAIService:
         # Download from GCS locally to upload to AI Studio
         import os
         import tempfile
-        import subprocess
         import time
+        from google.cloud import storage
         
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
             local_path = tmp.name
         
         try:
             logger.info(f"Downloading {gcs_video_uri} for AI Studio upload...")
-            subprocess.run(["gcloud", "storage", "cp", gcs_video_uri, local_path], check=True, capture_output=True)
+            client = storage.Client()
+            uri_parts = gcs_video_uri.replace("gs://", "").split("/", 1)
+            bucket = client.bucket(uri_parts[0])
+            blob = bucket.blob(uri_parts[1])
+            blob.download_to_filename(local_path)
             
             logger.info("Uploading video to AI Studio File API...")
             video_file = self.client.files.upload(file=local_path)

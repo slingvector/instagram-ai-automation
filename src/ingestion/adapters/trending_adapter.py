@@ -111,6 +111,8 @@ class TrendingAdapter(SourceAdapter):
             exclude_platforms = []
             
         sources = self.discovery_service.get_sources()
+        import random
+        random.shuffle(sources)
         for src in sources:
             platform = src.get("platform")
             if platform in exclude_platforms:

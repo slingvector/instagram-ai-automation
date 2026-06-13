@@ -1,0 +1,8 @@
+version: '3.8'
+
+services:
+  backend:
+    volumes:
+      # Bind mount the local code into the container for rapid testing without rebuilding
+      - ./src:/app/src
+      - ./scripts:/app/scripts

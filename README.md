@@ -1,82 +1,80 @@
-# instagram-ai-automation (Google Drive Flow)
+# Instagram AI Automation (V2 Pipeline)
 
 > **ModernOS Content Relay (MCR)** — An automated Instagram Reel ingestion and processing pipeline.
 
 ## What It Does
 
-1. **Scrapes** a source Instagram Reel or YouTube Video URL (trending adapters).
-2. **Downloads & processes** the video (via local or cloud media factory).
-3. **Generates AI copy** for the caption and hashtags.
-4. **Pushes** the finalized video and metadata to a Google Drive folder for manual review and posting.
+1. **Precision Targeting**: Harvests reels directly from targeted creators via curated manifests (e.g., `config/fashion_manifest.yaml`).
+2. **AI Action-Zone Cropping**: Uses Vertex AI to analyze landscape videos and intelligently re-frame the primary subject to a native 9:16 portrait cut.
+3. **Kinetic Typography**: Generates word-level timestamps and cinematic kinetic captions using FFmpeg.
+4. **Relay Engine**: Sends processed videos securely to your phone via local Wi-Fi (LocalSend) or to Firebase Storage for CDN delivery.
+5. **Dashboard**: A gorgeous Next.js GUI for manually reviewing and approving videos.
 
 ---
 
-## Architecture
+## 🚀 Easy Local Setup (Docker Compose)
 
-```
-[Reel URL / Keyword]
-    │
-    ▼
-src/scraper/              ← Scrape metadata + download video
-    │
-    ▼
-src/media_factory/        ← Process, resize, watermark video
-    │
-    ▼
-src/cloud_function/       ← Vertex AI copy generation
-    │
-    ▼
-src/orchestration/        ← SQLite State Machine (State tracking)
-    │
-    ▼
-[Google Drive Folder]     ← Final staging area
-```
-
----
-
-## Setup
+The easiest way to run the pipeline without installing Python, Node.js, FFmpeg, or browser drivers on your host machine is via Docker Compose.
 
 ### Prerequisites
-- Python 3.11+
-- GCP project with Firestore + Cloud Storage + Vertex AI
+- Docker & Docker Compose installed.
+- A valid `.env` file with your GCP / Firebase credentials.
 
-### Install
+### Instructions
 
-The project is installable as a Python package via `pyproject.toml`:
+1. **Clone the Repository**
+2. **Set up credentials**
+   ```bash
+   cp .env.example .env
+   # Ensure your google service account JSON is placed in the project root
+   ```
+3. **Boot the Pipeline & Dashboard**
+   ```bash
+   docker-compose up -d
+   ```
 
-```bash
-python -m venv venv && source venv/bin/activate
-pip install -e .
-```
+This will automatically:
+- Start the `backend` Python container which continuously scrapes and processes videos into the `./data` directory.
+- Start the `dashboard` Next.js container on port `3000`.
 
-### Download Binary Assets
-
-```bash
-# Download required emoji fonts
-./scripts/setup_fonts.sh
-```
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and fill in:
-
-```bash
-cp .env.example .env
-```
-
-| Variable | Description |
-|---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS` | Path to GCP service account JSON |
-| `GCP_PROJECT_ID` | Your GCP project ID |
-| `GCS_BUCKET_NAME` | GCS bucket for raw input |
-| `GCS_PROCESSED_BUCKET` | GCS bucket for processed videos |
+You can now view your dashboard locally at: [http://localhost:3000](http://localhost:3000)
 
 ---
 
-## Running the Pipeline
+## 🌍 Remote Access (View Dashboard Anywhere)
 
-You can run the full discovery and processing pipeline using the `bulk_post.py` script:
+If you are running the Docker Compose stack on your Mac or a local server, and want to access the Dashboard securely from your phone or while traveling, use a **Cloudflare Tunnel**. It is completely free and requires zero router configuration.
+
+### Cloudflare Tunnel Setup (1-Click)
+
+Run this command in a new terminal window on the machine running Docker:
 
 ```bash
-python scripts/bulk_post.py --count 10 --gap 0
+cloudflared tunnel --url http://localhost:3000
+```
+
+*(If you don't have `cloudflared` installed, install it via `brew install cloudflare/cloudflare/cloudflared` on Mac or download the binary).*
+
+Cloudflare will instantly output a secure, public HTTPS URL (e.g., `https://random-words.trycloudflare.com`). 
+You can visit this URL on any device anywhere in the world, and it will securely route to your local dashboard and video files!
+
+---
+
+## Architecture Overview
+
+```
+[Target Manifests]
+    │
+    ▼
+[Backend Container] (Python)
+    ├── Scrape & Download 
+    ├── AI Reframe (Vertex AI)
+    ├── Transcribe & Burn (FFmpeg)
+    └── Write to SQLite DB
+    │
+    ▼
+[Shared Volume] (./data)
+    │
+    ▼
+[Dashboard Container] (Next.js)  <──  [Cloudflare Tunnel]  <──  Your Phone (Anywhere)
 ```

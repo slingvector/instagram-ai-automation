@@ -1,3 +1,4 @@
+import os
 import json
 import logging
 import urllib.request
@@ -13,7 +14,7 @@ class OllamaService:
     fallback generates high-retention copy purely from the video's title and metadata.
     """
     def __init__(self, host: str = "http://localhost:11434", model: str = "llama3.2"):
-        self.host = host
+        self.host = os.environ.get("OLLAMA_HOST", host)
         self.model = model
         
     def generate_copy_from_metadata(self, title: str, context: str = "") -> Dict[str, Any]:

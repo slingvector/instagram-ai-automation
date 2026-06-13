@@ -1,0 +1,23 @@
+FROM mcr.microsoft.com/playwright/python:v1.42.0-jammy
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Set work directory
+WORKDIR /app
+
+# Install OS dependencies: ffmpeg for media_factory
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Run the pipeline daemon
+CMD ["python", "scripts/daemon_post.py"]
