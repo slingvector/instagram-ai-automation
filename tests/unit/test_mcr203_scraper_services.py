@@ -78,22 +78,27 @@ class TestGCSUploaderService:
         with patch("scraper.services.gcs_uploader_service.subprocess.run") as mock_run, \
              patch("scraper.services.gcs_uploader_service.os.path.exists", return_value=True):
 
-            mock_run.return_value = MagicMock(returncode=0, stderr="")
+            mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="30.5\n")
 
             result = service.download_and_upload("https://www.instagram.com/reel/TEST123/")
 
-            # yt-dlp called
-            mock_run.assert_called_once()
-            call_args = mock_run.call_args[0][0]
-            assert "yt-dlp" in call_args
-            assert "https://www.instagram.com/reel/TEST123/" in call_args
+            # Service now returns (gcs_uri, duration) tuple
+            gcs_uri, duration = result
+
+            # yt-dlp should be the first call
+            first_call_args = mock_run.call_args_list[0][0][0]
+            assert "yt-dlp" in first_call_args
+            assert "https://www.instagram.com/reel/TEST123/" in first_call_args
+
+            # ffprobe is called second for duration detection
+            assert mock_run.call_count >= 2
 
             # GCS upload called
             mock_blob.upload_from_filename.assert_called_once()
 
             # URI format correct
-            assert result.startswith("gs://test-bucket/reels/reel_")
-            assert result.endswith(".mp4")
+            assert gcs_uri.startswith("gs://test-bucket/reels/reel_")
+            assert gcs_uri.endswith(".mp4")
 
     @patch("scraper.services.gcs_uploader_service.storage.Client")
     def test_download_failure_raises(self, mock_storage_client):

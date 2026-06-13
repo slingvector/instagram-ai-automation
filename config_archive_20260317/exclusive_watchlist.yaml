@@ -1,0 +1,15 @@
+# config/exclusive_watchlist.yaml
+
+# Exclusive watchlist for highly-targeted isolated accounts.
+# These bypass generic limits and are strictly monitored.
+
+filters:
+  min_views: 100000      # 100K (lower barrier)
+  min_likes: 5000
+  posted_within_days: 14
+
+creators:
+  explicit:
+    # NSFW or edge accounts that must be strictly separated 
+    # from the main content factory stream.
+    - "some_nsfw_example_account"

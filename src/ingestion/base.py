@@ -28,6 +28,11 @@ class Niche:
     ENTERTAINMENT = "entertainment"
     SPORT         = "sport"
     FUN           = "fun"
+    NEWS          = "news"
+    TECH          = "tech"
+    FINANCE       = "finance"
+    NATURE        = "nature"
+    ADRENALINE    = "adrenaline"
     EXPLICIT      = "explicit"   # → always routed to AccountProfile.EXCLUSIVE
 
 
@@ -76,8 +81,10 @@ class ContentItem:
     engagement_score: float = 0.0
     view_count:       int   = 0
     like_count:       int   = 0
+    comment_count:    int   = 0
     save_count:       int   = 0
     share_count:      int   = 0
+    upload_timestamp: Optional[int] = None
 
     # Audio
     audio_url:    Optional[str] = None   # Original audio URL (for mood matching)
@@ -89,6 +96,9 @@ class ContentItem:
     title:            Optional[str] = None
     duration_seconds: Optional[int] = None
     shortcode:        Optional[str] = None  # IG reel shortcode for dedup
+
+    # Immersive Intelligence (Phase 1: Meta-tags)
+    immersive_metadata: dict = field(default_factory=dict) # {type, motion, perspective, score}
 
     # Extra provider-specific data
     raw_metadata: dict = field(default_factory=dict)
@@ -111,13 +121,27 @@ class ContentItem:
     def compute_engagement_score(self) -> float:
         """
         Weighted engagement score for content ranking/filtering.
-        Saves and shares weighted higher — they signal intent, not just consumption.
+        Loads weights from yaml config if possible to avoid hardcoding.
         """
+        import yaml
+        from pathlib import Path
+        config_path = Path("config/uvi_config.yaml")
+        
+        weights = {"view": 0.1, "like": 1.0, "save": 5.0, "share": 3.0} # Fallbacks
+        
+        if config_path.exists():
+            try:
+                with open(config_path, "r") as f:
+                    cfg = yaml.safe_load(f)
+                    weights.update(cfg.get("engagement_weights", {}))
+            except Exception:
+                pass
+
         score = (
-            self.view_count  * 0.1  +
-            self.like_count  * 1.0  +
-            self.save_count  * 5.0  +
-            self.share_count * 3.0
+            self.view_count  * weights["view"]  +
+            self.like_count  * weights["like"]  +
+            self.save_count  * weights["save"]  +
+            self.share_count * weights["share"]
         )
         self.engagement_score = score
         return score
@@ -140,6 +164,45 @@ class SourceAdapter(ABC):
         Returns only items that have not already been processed (dedup is caller's responsibility).
         """
         ...
+
+    def get_platform_config(self, platform: str) -> dict:
+        """
+        Load platform-specific filters and enablement from uvi_config.yaml.
+        """
+        import yaml
+        from pathlib import Path
+        config_path = Path("config/uvi_config.yaml")
+
+        # Default fallbacks
+        p_cfg = {
+            "enabled": True,
+            "min_views": 100000,
+            "multiplier": 1.0,
+            "baseline": 0.0
+        }
+
+        if config_path.exists():
+            try:
+                with open(config_path, "r") as f:
+                    all_cfg = yaml.safe_load(f)
+                    p_cfg.update(all_cfg.get("platforms", {}).get(platform, {}))
+            except Exception:
+                pass
+        return p_cfg
+
+    def calculate_uvi(self, platform: str, raw_metric: float) -> float:
+        """
+        Universal Virality Index (UVI) Calculation.
+        Formula: log10(RawMetric * Multiplier) - Baseline
+        """
+        import math
+        p_cfg = self.get_platform_config(platform)
+        
+        if raw_metric <= 0:
+            return 0.0
+            
+        score = math.log10(raw_metric * p_cfg["multiplier"]) - p_cfg["baseline"]
+        return max(0.0, score)
 
     def run(self) -> List[ContentItem]:
         """

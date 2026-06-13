@@ -1,0 +1,25 @@
+version: "3.8"
+
+# docker-compose.ingest.yml
+# Deploy this file alongside Dockerfile.ingest on your Cloud VPS (e.g., AWS EC2, DigitalOcean).
+
+services:
+  mcr-ingestion:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingest
+    container_name: mcr-ingestion
+    restart: unless-stopped
+    volumes:
+      # Mount data folder to persist the SQLite deduplication database and Playwright cookies
+      - ./data:/app/data
+      # Mount config folder so you can edit YAML watchlists live without rebuilding the image
+      - ./config:/app/config
+      # Mount GCP credentials securely as read-only
+      - ./modernos-edge-agent-key.json:/app/docs/key.json:ro
+    environment:
+      # Instruct the Google Cloud SDK to use the mounted JSON key
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/docs/key.json
+    env_file:
+      # Exposes environment variables like GCP_PROJECT_ID, IG_READONLY_USERNAME, etc.
+      - .env

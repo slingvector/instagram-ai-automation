@@ -1,9 +1,14 @@
 import pytest
+import sys
+import os
 from unittest.mock import patch, MagicMock
-from repositories.job_repository import JobRepository
-from google.cloud.exceptions import GoogleCloudError
 
-@patch('repositories.job_repository.firestore.Client')
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../'))
+
+from src.cloud_function.repositories.job_repository import JobRepository
+
+
+@patch('src.cloud_function.repositories.job_repository.firestore.Client')
 def test_create_job_success(mock_client_class):
     # Setup mock
     mock_db = MagicMock()
@@ -32,7 +37,7 @@ def test_create_job_success(mock_client_class):
     assert call_args["ai_metadata"] == metadata
     assert call_args["status"] == "PENDING_MEDIA_FACTORY"
 
-@patch('repositories.job_repository.firestore.Client')
+@patch('src.cloud_function.repositories.job_repository.firestore.Client')
 def test_create_job_failure(mock_client_class):
     # Setup mock to simulate a database write error
     mock_db = MagicMock()

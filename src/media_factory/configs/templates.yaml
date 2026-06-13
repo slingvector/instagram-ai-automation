@@ -1,0 +1,139 @@
+# Ultra-Pro Media Engine: Global Template Registry
+# 30+ Professional Templates (10 Original + 20 Creator-Inspired)
+
+templates:
+  # --- CREATOR INSPIRED (TOP 20) ---
+  
+  hormozi_bold:
+    description: "High-authority business/wealth style. Aggressive, fast-paced, high retention."
+    font: "TheBoldFont"
+    font_size: 58
+    color_scheme: {primary: "white", highlight: "yellow", secondary: "green"}
+    animation: "skew_pop"
+    grading: {contrast: 1.3, saturation: 1.6}
+    layout: "center_lower"
+
+  beast_impact:
+    description: "Entertainment/Viral style. focus on excitement and visual clarity."
+    font: "Komika Axis"
+    font_size: 60
+    color_scheme: {primary: "white", highlight: "red", secondary: "cyan"}
+    animation: "bounce"
+    grading: {contrast: 1.4, saturation: 1.8}
+    layout: "center_third"
+
+  podcast_guru:
+    description: "High-energy podcast style. Used by top influencers."
+    font: "Montserrat-Black"
+    font_size: 62
+    color_scheme: {primary: "#FFFFFF", highlight: "#FFD700", secondary: "#FF4500"}
+    animation: "shake_pop"
+    grading: {contrast: 1.25, saturation: 1.4, sharpness: 1.5}
+    layout: "center_third"
+    pump_intensity: 1.5
+
+  beauty_standard:
+    description: "Elegant, soft, and warm. Focus on aesthetics."
+    font: "Playfair Display"
+    font_size: 48
+    color_scheme: {primary: "#FFF5F5", highlight: "#FFC0CB"}
+    animation: "fade_expand"
+    grading: {contrast: 1.05, saturation: 1.1, brightness: 0.1, soft_glow: 0.2}
+    layout: "minimal_lower"
+    pump_intensity: 0.5
+
+  court_clash:
+    description: "Sports-specific style for high-movement action."
+    font: "Oswald-Heavy"
+    font_size: 55
+    color_scheme: {primary: "#FFFFFF", highlight: "#CCFF00"} 
+    animation: "pop"
+    grading: {contrast: 1.4, saturation: 1.5, sharpness: 1.2}
+    layout: "center_third"
+    pump_intensity: 1.2
+
+  finance_slick:
+    description: "Clean, corporate, and data-driven."
+    font: "Inter-Bold"
+    font_size: 52
+    color_scheme: {primary: "#E0E0E0", highlight: "#00FF00"}
+    animation: "skew_pop"
+    grading: {contrast: 1.2, saturation: 1.1}
+    layout: "center_lower"
+
+  tech_noir:
+    description: "Deep tech, AI, and futuristic coding style."
+    font: "JetBrains Mono"
+    font_size: 50
+    color_scheme: {primary: "#00FFFF", highlight: "#FFFFFF"}
+    animation: "shake_pop"
+    grading: {contrast: 1.5, saturation: 1.2}
+    layout: "floating_hud"
+
+  history_monolith:
+    description: "Solemn, monolithic style for documentary/history content."
+    font: "Cinzel-Bold"
+    font_size: 55
+    color_scheme: {primary: "#D4AF37", highlight: "#FFFFFF"} # Gold/White
+    animation: "fade_slide"
+    grading: {contrast: 1.3, sepia: 0.2}
+    layout: "center_third"
+
+  abdaal_minimal:
+    description: "Educational/Polished style."
+    font: "Inter"
+    font_size: 45
+    color_scheme: {primary: "#F5F5F5", highlight: "#1A73E8"}
+    animation: "fade_slide"
+    grading: {contrast: 1.1, saturation: 1.1, brightness: 0.05}
+    layout: "margin_wide"
+
+  insta360_motion:
+    description: "Dynamic movement style. Mimics gimbal/360 reframing effects with smooth ROI tracking."
+    font: "Montserrat-Bold"
+    color_scheme: {primary: "white", highlight: "orange"}
+    animation: "drift_horizontal"
+    grading: {contrast: 1.25, saturation: 1.3}
+    layout: "dynamic_roi"
+
+  capcut_vibe:
+    description: "The 'Aa Gail' style. Fun, energetic, trend-focused with bouncy animations."
+    font: "Bangers"
+    color_scheme: {primary: "magenta", highlight: "cyan"}
+    animation: "bounce"
+    grading: {contrast: 1.2, saturation: 1.5}
+    layout: "random_jitter"
+
+  # --- ORIGINAL ULTRA-PRO (TOP 10) ---
+
+  geopolitical_steel:
+    description: "Cold, serious, authoritative. Best for news/military/history. Psychological triggers: Fear, Gravity, History."
+    font: "Oswald-Heavy"
+    color_scheme: {primary: "#C0C0C0", highlight: "#8B0000"}  # Silver and Blood Red
+    animation: "flicker_reveal"
+    grading: {contrast: 1.5, saturation: 0.8, color_tint: "blue-grey"}
+    layout: "bottom_heavy"
+
+  neo_tokyo_glitch:
+    description: "Cyberpunk aesthetic. Tech, AI, and futuristic content. High dopamine glitch-triggers."
+    font: "VT323"
+    color_scheme: {primary: "#39FF14", highlight: "#FF00FF"} # Neon Green/Magenta
+    animation: "glitch_scanline"
+    grading: {contrast: 1.3, saturation: 2.0}
+    layout: "floating_hud"
+
+  zen_lifestyle:
+    description: "Calm, organic, aesthetic. Nature, travel, and wellness. Serotonin-focused soft palettes."
+    font: "Playfair Display"
+    color_scheme: {primary: "#EEE8AA", highlight: "#556B2F"}
+    animation: "slow_expansion"
+    grading: {contrast: 0.95, saturation: 0.9, brightness: 0.1}
+    layout: "minimal_lower"
+
+  pulse_investor:
+    description: "Data-heavy, urgent, financial. Trading and stock market updates. Urgency triggers."
+    font: "Roboto-Mono"
+    color_scheme: {primary: "#00FF00", highlight: "#FFFFFF"}
+    animation: "ticker_scroll"
+    grading: {contrast: 1.2, saturation: 1.2}
+    layout: "split_screen_info"

@@ -46,9 +46,17 @@ class DMAdapter(SourceAdapter):
 
     source_type = SourceType.DM
 
-    def __init__(self, headless: bool = True, max_threads: int = 20):
+    def __init__(self, headless: bool = True, max_threads: int = 20, thread_whitelist: List[str] = None):
         self.headless = headless
         self.max_threads = max_threads       # Max DM threads to check per run
+        
+        # Load thread whitelist from env if not provided
+        if thread_whitelist is None:
+            env_whitelist = os.environ.get("IG_THREAD_WHITELIST", "")
+            self.thread_whitelist = [tid.strip() for tid in env_whitelist.split(",") if tid.strip()]
+        else:
+            self.thread_whitelist = thread_whitelist
+            
         self.dedup = ContentDedup()
         self.username = os.environ.get("IG_READONLY_USERNAME", "")
         self.password = os.environ.get("IG_READONLY_PASSWORD", "")
@@ -70,9 +78,32 @@ class DMAdapter(SourceAdapter):
         items: List[ContentItem] = []
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=self.headless)
-            context = self._make_context(browser, p)
-            page = context.new_page()
+            persistent_dir = Path("data/browser_session")
+            persistent_dir.mkdir(parents=True, exist_ok=True)
+            
+            context_kwargs = {
+                "user_agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                ),
+                "viewport": {"width": 1280, "height": 800},
+                "locale": "en-US",
+                "device_scale_factor": 2,
+                "headless": self.headless,
+            }
+            
+            use_proxy = os.environ.get("USE_PROXY_FOR_INGESTION", "false").lower() == "true"
+            proxy_url = os.environ.get("PROXY_SERVER")
+            
+            if use_proxy and proxy_url:
+                context_kwargs["proxy"] = {"server": proxy_url}
+
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=str(persistent_dir),
+                **context_kwargs
+            )
+            
+            page = context.pages[0] if context.pages else context.new_page()
 
             # Attach browser debug listeners
             page.on("console", lambda msg: logger.debug(f"BROWSER CONSOLE [{msg.type}]: {msg.text}"))
@@ -90,13 +121,13 @@ class DMAdapter(SourceAdapter):
                             for m in matches:
                                 if re.match(r'^[A-Za-z0-9_-]{11,15}$', m):
                                     self._api_shortcodes.add(m)
-                                elif "/reel/" in m or "/p/" in m or "/reels/" in m:
-                                    url_m = re.search(r'/(?:reel|p|reels)/([A-Za-z0-9_-]+)', m)
+                                elif "/reel/" in m or "/reels/" in m:
+                                    url_m = re.search(r'/(?:reel|reels)/([A-Za-z0-9_-]+)', m)
                                     if url_m:
                                         self._api_shortcodes.add(url_m.group(1))
                             
                             # Fallback for hidden URLs in the JSON payload
-                            fallback_urls = re.findall(r'/(?:reel|p|reels)/([A-Za-z0-9_-]+)[/"\'\\]', text)
+                            fallback_urls = re.findall(r'/(?:reel|reels)/([A-Za-z0-9_-]+)[/"\'\\]', text)
                             for u in fallback_urls:
                                 self._api_shortcodes.add(u)
                 except Exception:
@@ -112,32 +143,11 @@ class DMAdapter(SourceAdapter):
             except Exception as e:
                 logger.error(f"DM scraping failed: {e}")
             finally:
-                # Save updated session cookies
-                try:
-                    context.storage_state(path=str(self.session_file))
-                except Exception as e:
-                    logger.debug(f"Could not save storage state (maybe browser closed): {e}")
-                browser.close()
+                context.close()
 
         return items
 
     # ── Session & login ───────────────────────────────────────────────────────
-
-    def _make_context(self, browser, p):
-        """Create a stealth browser context, loading saved session if available."""
-        context_kwargs = {
-            "user_agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            ),
-            "viewport": {"width": 1280, "height": 800},
-            "locale": "en-US",
-            "device_scale_factor": 2,
-        }
-        if self.session_file.exists():
-            context_kwargs["storage_state"] = str(self.session_file)
-
-        return browser.new_context(**context_kwargs)
 
     def _login(self, page) -> None:
         """Login to Instagram if not already authenticated via saved session."""
@@ -231,8 +241,19 @@ class DMAdapter(SourceAdapter):
             try:
                 # Safely get the thread name for logging
                 t_name = thread.inner_text().split('\n')[0]
-                logger.info(f"Opening thread: {t_name}")
-                thread_items = self._process_thread(page, thread)
+                
+                # If whitelist is enabled, we need to click to check the ID
+                # or find a way to check it beforehand. For now, we click and skip.
+                thread.click()
+                self._human_delay(3, 5)
+                
+                current_thread_id = page.url.strip('/').split('/')[-1]
+                if self.thread_whitelist and current_thread_id not in self.thread_whitelist:
+                    logger.info(f"Skipping non-whitelisted thread: {t_name} ({current_thread_id})")
+                    continue
+
+                logger.info(f"Processing whitelisted thread: {t_name} ({current_thread_id})")
+                thread_items = self._process_thread_content(page, current_thread_id)
                 items.extend(thread_items)
             except Exception as e:
                 logger.error(f"Thread processing error: {e}", exc_info=True)
@@ -240,24 +261,32 @@ class DMAdapter(SourceAdapter):
 
         return items
 
-    def _process_thread(self, page, thread) -> List[ContentItem]:
-        """Click a thread and extract new Reel URLs from its messages."""
+    def _process_thread_content(self, page, thread_id: str) -> List[ContentItem]:
+        """Extract new Reel URLs from the currently active DM thread."""
         items: List[ContentItem] = []
-        thread.click()
-        self._human_delay(3, 5)
 
         try:
             page.wait_for_selector('a[href]', timeout=10_000)
         except PlaywrightTimeoutError:
             pass
             
-        thread_id = page.url.strip('/').split('/')[-1]
         try:
             html = page.content()
             dump_path = Path(f"debug/thread_{thread_id}.html")
             dump_path.write_text(html, encoding="utf-8")
         except Exception as e:
             logger.debug(f"Failed to dump thread HTML: {e}")
+
+        # Pagination to load older messages if not all are in initial payload
+        logger.info(f"Scrolling up to load older messages for thread {thread_id} (Pagination)...")
+        # Hover near the center where the messages usually are
+        try:
+            page.mouse.move(640, 400) # center of 1280x800 viewport
+            for _ in range(3):
+                page.mouse.wheel(0, -3000) # Scroll up
+                self._human_delay(1.5, 2.5)
+        except Exception as wheel_err:
+            logger.debug(f"Could not scroll up to paginate: {wheel_err}")
 
         # Give the API responses time to fully arrive
         self._human_delay(2, 4)
@@ -267,7 +296,7 @@ class DMAdapter(SourceAdapter):
         self._api_shortcodes.clear()
         
         # 2. Add any shortcodes found natively in the URL (unlikely but safe)
-        if "/reel/" in page.url or "/p/" in page.url:
+        if "/reel/" in page.url or "/reels/" in page.url:
             shortcode = page.url.strip('/').split('/')[-1]
             shortcodes.append(shortcode)
             
@@ -289,6 +318,8 @@ class DMAdapter(SourceAdapter):
                 logger.info(f"DM already seen: {message_id}")
                 continue
 
+            # Use the /reel/ URL structure instead of /p/ to ensure yt-dlp
+            # correctly parses Instagram Reels using its dedicated unauthenticated extractor.
             url = f"https://www.instagram.com/reel/{shortcode}/"
             item = ContentItem(
                 url=url,
@@ -301,9 +332,9 @@ class DMAdapter(SourceAdapter):
             )
             items.append(item)
 
-            # Register in SQLite so we never process this DM again
-            self.dedup.register_dm(message_id, thread_url, url)
-            logger.info(f"New DM reel queued: {url}")
+            # Removed: self.dedup.register_dm(...)
+            # Dedup state is now managed downstream upon successful post!
+            logger.info(f"New DM reel queued (unregistered): {url}")
 
         return items
 

@@ -52,3 +52,15 @@ others_temp/
 # ── Logs ───────────────────────────────────────────────────────────────────────
 *.log
 logs/
+
+# ── Credentials & Secrets ──────────────────────────────────────────────────────
+token.json
+credentials.json
+.env
+.flaskenv
+
+# ── Run-Specific Data ───────────────────────────────────────────────────────────
+batch_creators_2.txt
+seed_creators.txt
+creators.txt
+results.json

@@ -1,7 +1,7 @@
 import os
 from flask import Flask, request, jsonify
 import logging
-from controllers.factory_controller import process_job
+from src.media_factory.controllers.factory_controller import process_job
 
 # Set up standard logging
 logging.basicConfig(level=logging.INFO)

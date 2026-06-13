@@ -13,11 +13,12 @@ import random
 import time
 import yaml
 from pathlib import Path
-from typing import List
+from typing import List, Iterator, Optional, Dict, Any
 
 from src.ingestion.base import ContentItem, Platform, SourceAdapter, SourceType
 from src.ingestion.dedup import ContentDedup
 from src.ingestion.downloader import UniversalDownloader
+from src.utils.proxy_helper import ProxyHelper
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class CreatorAdapter(SourceAdapter):
         self.dedup = ContentDedup()
         self.downloader = UniversalDownloader(output_dir=Path("data/downloads/tmp"))
         self.session_file = Path(os.environ.get("IG_SESSION_FILE", "data/ig_readonly_session.json"))
-        
+        self.proxy_helper = ProxyHelper()
         self.watchlists = self._load_configs()
 
     def _load_configs(self) -> dict:
@@ -41,6 +42,7 @@ class CreatorAdapter(SourceAdapter):
             "filters": {
                 "min_views": 500000,
                 "min_likes": 10000,
+                "outlier_multiplier": 1.5,
             },
             "creators": {}
         }
@@ -70,7 +72,7 @@ class CreatorAdapter(SourceAdapter):
                     
         return combined
 
-    def fetch(self) -> List[ContentItem]:
+    def fetch(self, min_views: int = None, broad_mode: bool = False) -> Iterator[ContentItem]:
         """
         Open Instagram via Playwright, visit each creator's /reels/ page,
         extract shortcodes, prefetch metadata, and apply engagement filters.
@@ -87,21 +89,42 @@ class CreatorAdapter(SourceAdapter):
             return []
 
         items: List[ContentItem] = []
+        
+        p_cfg = self.get_platform_config(Platform.INSTAGRAM)
+        if not p_cfg.get("enabled", True):
+            logger.warning("Instagram platform is disabled in uvi_config.yaml. Skipping CreatorAdapter fetch.")
+            return items
+
         filters = self.watchlists.get("filters", {})
-        min_views = filters.get("min_views", 100000)
+        min_views_internal = min_views if min_views else p_cfg.get("min_views", 100000)
         min_likes = filters.get("min_likes", 5000)
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=self.headless)
+            persistent_dir = Path("data/browser_session")
+            persistent_dir.mkdir(parents=True, exist_ok=True)
+            
             context_kwargs = {
                 "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
                 "viewport": {"width": 1280, "height": 800},
+                "headless": self.headless,
             }
-            if self.session_file.exists():
-                context_kwargs["storage_state"] = str(self.session_file)
+            
+            proxy_config = self.proxy_helper.get_playwright_proxy()
+            if proxy_config:
+                context_kwargs["proxy"] = proxy_config
 
-            context = browser.new_context(**context_kwargs)
-            page = context.new_page()
+            try:
+                context = p.chromium.launch_persistent_context(
+                    user_data_dir=str(persistent_dir),
+                    **context_kwargs
+                )
+            except Exception as e:
+                logger.warning(f"Failed to launch persistent context: {e}. Falling back to standard non-persistent launch.")
+                # Remove user_data_dir and launch regular browser
+                browser = p.chromium.launch(headless=self.headless, proxy=context_kwargs.get("proxy"))
+                context = browser.new_context(user_agent=context_kwargs["user_agent"], viewport=context_kwargs["viewport"])
+            
+            page = context.pages[0] if context.pages else context.new_page()
 
             api_reels = {} # shortcode -> {views, likes}
             
@@ -134,21 +157,32 @@ class CreatorAdapter(SourceAdapter):
                         
             page.on("response", handle_res)
 
-            # Flatten to list of (niche, username) to process
+            # Flatten to list of (niche, dict) to process
             tasks = []
             for niche, accounts in creators.items():
                 for acc in accounts:
-                    tasks.append((niche, acc))
+                    if isinstance(acc, str):
+                        tasks.append((niche, {"username": acc}))
+                    elif isinstance(acc, dict):
+                        tasks.append((niche, acc))
                     
             logger.info(f"Scanning {len(tasks)} creator profiles...")
 
-            for niche, username in tasks:
+            for niche, acc_info in tasks:
+                username = acc_info["username"]
+                follower_baseline = acc_info.get("follower_baseline", 0)
+                is_private = acc_info.get("is_private", False)
+                
                 logger.info(f"Visiting profile: @{username} (niche: {niche})")
                 
                 try:
                     url = f"https://www.instagram.com/{username}/reels/"
                     page.goto(url, wait_until="domcontentloaded")
                     self._human_delay(2, 4)
+                    
+                    if follower_baseline == 0:
+                        follower_baseline = self._get_follower_count(page)
+                    logger.info(f"Creator @{username} mapped with {follower_baseline} followers.")
                     
                     # Ensure page loaded correctly (look for reel links or standard IG markers)
                     try:
@@ -157,20 +191,22 @@ class CreatorAdapter(SourceAdapter):
                         logger.debug(f"Could not find Reels tab for @{username} (might be private or empty).")
                         continue
                         
-                    # Extract reel hrefs
-                    links = page.locator("a[href*='/reel/']").all()
+                    # Extract reel hrefs with scrolling for deeper yield
                     shortcodes = []
-                    for link in links:
-                        href = link.get_attribute("href")
-                        if href:
-                            # Extract shortcode from /reel/SHORTCODE/
-                            parts = href.strip('/').split('/')
-                            if len(parts) >= 2 and parts[-2] == "reel":
-                                shortcodes.append(parts[-1])
+                    for _ in range(3): # Scroll 3 times to get ~36-50 reels
+                        links = page.locator("a[href*='/reel/']").all()
+                        for link in links:
+                            href = link.get_attribute("href")
+                            if href:
+                                parts = href.strip('/').split('/')
+                                if len(parts) >= 2 and parts[-2] == "reel":
+                                    shortcodes.append(parts[-1])
+                        page.mouse.wheel(0, 2000)
+                        self._human_delay(1, 2)
                                 
                     # Deduplicate shortcodes in this scrape
                     shortcodes = list(dict.fromkeys(shortcodes))
-                    logger.info(f"Extracted {len(shortcodes)} shortcodes from @{username}")
+                    logger.info(f"Extracted {len(shortcodes)} shortcodes from @{username} (after scrolling)")
                     
                     for shortcode in shortcodes:
                         reel_url = f"https://www.instagram.com/reel/{shortcode}/"
@@ -193,6 +229,12 @@ class CreatorAdapter(SourceAdapter):
                             continue
                             
                         # Analyze engagement natively from our GraphQL interceptor!
+                        if broad_mode:
+                            # In broad mode, we don't care about API metadata (views/likes) yet.
+                            # We just want to populate the SCANNED queue.
+                            yield temp_item
+                            continue
+                            
                         if shortcode in api_reels:
                             views = api_reels[shortcode]["views"]
                             likes = api_reels[shortcode]["likes"]
@@ -200,8 +242,17 @@ class CreatorAdapter(SourceAdapter):
                             logger.warning(f"Could not find API metadata for {shortcode}, skipping.")
                             continue
                         
-                        if views >= min_views and likes >= min_likes:
-                            engagement_score = (views * 0.1) + (likes * 1.0)
+                        # Outlier Multiplier Logic: The view count must exceed either the global minimum OR
+                        # the creator's follower count multiplied by the outlier factor.
+                        # For massive accounts (e.g. 70M), we cap the baseline influence to avoid impossible thresholds.
+                        capped_baseline = min(follower_baseline, 2_000_000) 
+                        multiplier = filters.get("outlier_multiplier", 1.5)
+                        outlier_threshold = max(min_views_internal, int(capped_baseline * multiplier)) if capped_baseline > 0 else min_views_internal
+                        
+                        logger.debug(f"Evaluating {shortcode} - Views: {views}. Required Outlier Threshold: {outlier_threshold}")
+                        
+                        if views >= outlier_threshold and likes >= min_likes:
+                            engagement_score = self.calculate_uvi("instagram", float(views))
                             
                             item = ContentItem(
                                 url=reel_url,
@@ -214,23 +265,44 @@ class CreatorAdapter(SourceAdapter):
                                 shortcode=shortcode,
                                 raw_metadata={"creator": username, "source_profile": url}
                             )
-                            items.append(item)
+                            # ONLY register in dedup if we are actually yielding it as a hit
+                            self.dedup.register_dm(message_id, url, reel_url)
+                            yield item
                             logger.info(f"✅ Found viral reel! @{username}/{shortcode} (Views: {views}, Likes: {likes})")
-                            
-                            # Register it as seen
-                            self.dedup.register_dm(message_id, url, reel_url)
                         else:
-                            # Not viral enough, still mark it as seen so we don't waste yt-dlp calls on it later
-                            self.dedup.register_dm(message_id, url, reel_url)
+                            # Not viral enough. We DON'T register in dedup here so that if the user 
+                            # lowers thresholds later, we can still discover it.
+                            pass
 
                 except Exception as e:
                     logger.error(f"Error scraping creator @{username}: {e}", exc_info=True)
                     
                 self._human_delay(3, 6) # Delay between accounts
 
-            browser.close()
+            context.close()
 
-        return items
+    @staticmethod
+    def _get_follower_count(page) -> int:
+        """Parse the creator's follower count right off the Instagram page title/meta description."""
+        try:
+            content = page.evaluate("""() => {
+                let meta = document.querySelector('meta[name="description"]');
+                return meta ? meta.content : "";
+            }""")
+            if content:
+                import re
+                m = re.search(r'([\d\.,]+[kKmM]?)\s+Followers', content, re.IGNORECASE)
+                if m:
+                    val_str = m.group(1).upper().replace(',', '')
+                    if 'M' in val_str:
+                        return int(float(val_str.replace('M', '')) * 1000000)
+                    elif 'K' in val_str:
+                        return int(float(val_str.replace('K', '')) * 1000)
+                    else:
+                        return int(val_str)
+        except Exception as e:
+            logger.debug(f"Could not parse follower count: {e}")
+        return 0
 
     @staticmethod
     def _human_delay(min_s: float = 0.5, max_s: float = 2.0) -> None:

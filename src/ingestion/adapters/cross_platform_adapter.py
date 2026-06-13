@@ -11,7 +11,7 @@ import logging
 import os
 import yaml
 from pathlib import Path
-from typing import List
+from typing import List, Iterator
 
 from src.ingestion.base import ContentItem, Platform, SourceAdapter, SourceType
 from src.ingestion.dedup import ContentDedup
@@ -34,9 +34,17 @@ class CrossPlatformAdapter(SourceAdapter):
         self.max_items_per_query = max_items_per_query
         self.dedup = ContentDedup()
         
+        # Read download strategy from manifest
+        from src.ingestion.services.discovery_service import DiscoveryService
+        from src.ingestion.base import Platform
+        discovery_service = DiscoveryService("config/discovery_manifest.yaml")
+        tiktok_policy = discovery_service.get_downloader_policy(Platform.TIKTOK)
+        
         # We need the downloader just for its prefetch_metadata capability
-        # The actual download happens dynamically when scheduler.py triggers
-        self.downloader = UniversalDownloader(output_dir=Path("data/downloads/tmp"))
+        self.downloader = UniversalDownloader(
+            output_dir=Path("data/downloads/tmp"),
+            tiktok_policy=tiktok_policy
+        )
         self.targets = self._load_config()
 
     def _load_config(self) -> dict:
@@ -51,12 +59,24 @@ class CrossPlatformAdapter(SourceAdapter):
                 logger.error(f"Failed to parse {self.config_path}: {e}")
                 return {}
 
-    def fetch(self) -> List[ContentItem]:
+    def fetch(self, exclude_platforms: List[str] = None, min_views: int = None) -> Iterator[ContentItem]:
         """Iterates through all platforms and niches in the config and returns newly discovered content."""
+        if exclude_platforms is None:
+            exclude_platforms = []
+            
         items: List[ContentItem] = []
         
         for platform_key, niches in self.targets.items():
             platform_enum = self._map_platform_key(platform_key)
+            p_cfg = self.get_platform_config(platform_enum)
+            
+            # Check if platform is enabled globally or via CLI
+            if not p_cfg.get("enabled", True) or platform_enum in exclude_platforms:
+                logger.info(f"Skipping disabled cross-platform source: {platform_key}")
+                continue
+
+            # Determine view threshold for this platform: CLI > Config
+            p_min_views = min_views if min_views else p_cfg.get("min_views", 100000)
             
             if not isinstance(niches, dict):
                 continue
@@ -66,14 +86,13 @@ class CrossPlatformAdapter(SourceAdapter):
                     continue
                     
                 for query in queries:
-                    logger.info(f"Checking {platform_key} for {query} (niche: {niche})")
+                    logger.info(f"Checking {platform_key} for {query} (niche: {niche}, min_views: {p_min_views})")
                     try:
-                        results = self._fetch_for_query(platform_enum, niche, query)
-                        items.extend(results)
+                        yield from self._fetch_for_query(platform_enum, niche, query, p_min_views)
                     except Exception as e:
                         logger.error(f"Failed to fetch {query} on {platform_key}: {e}", exc_info=True)
                         
-        return items
+        # return items removed
 
     def _map_platform_key(self, key: str) -> str:
         key = key.lower()
@@ -105,7 +124,7 @@ class CrossPlatformAdapter(SourceAdapter):
         # Fallback search
         return f"ytsearch{self.max_items_per_query}:{query}"
 
-    def _fetch_for_query(self, platform: str, niche: str, query: str) -> List[ContentItem]:
+    def _fetch_for_query(self, platform: str, niche: str, query: str, min_views: int = 0) -> Iterator[ContentItem]:
         target_url = self._construct_ytdlp_url(platform, query)
         items: List[ContentItem] = []
         
@@ -163,8 +182,11 @@ class CrossPlatformAdapter(SourceAdapter):
                     likes = meta.get("like_count", 0)
                     title = meta.get("title", data.get("title", ""))
                     
+                    if views < min_views:
+                        continue
+                        
                     if views > 0 or likes > 0:
-                        engagement_score = (views * 0.1) + (likes * 1.0)
+                        engagement_score = self.calculate_uvi(platform, float(views))
                         
                     item = ContentItem(
                         url=url,
@@ -178,7 +200,7 @@ class CrossPlatformAdapter(SourceAdapter):
                         duration_seconds=meta.get("duration"),
                         raw_metadata={"query": query, "original_extractor": data.get("extractor")}
                     )
-                    items.append(item)
+                    yield item
                 except json.JSONDecodeError:
                     continue
                     
@@ -186,5 +208,3 @@ class CrossPlatformAdapter(SourceAdapter):
             logger.warning(f"Timeout while scanning {target_url}")
         except Exception as e:
             logger.error(f"Error scanning {target_url}: {e}", exc_info=True)
-            
-        return items

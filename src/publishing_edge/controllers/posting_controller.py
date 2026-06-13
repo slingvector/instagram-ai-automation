@@ -6,6 +6,7 @@ from google.cloud import firestore, storage
 
 from src.publishing_edge.services.adb_client import ADBClient
 from src.publishing_edge.services.appium_posting_service import AppiumPostingService
+from src.publishing_edge.services.warmup_service import WarmupService
 from src.publishing_edge.config import (
     GCP_PROJECT_ID, GCS_PROCESSED_BUCKET,
     DEVICE_UDID, HUMAN_REVIEW_ENABLED
@@ -37,25 +38,38 @@ class PostingController:
         self.gcs = storage.Client(project=GCP_PROJECT_ID)
         self.adb = ADBClient(device_udid=DEVICE_UDID)
         self.appium = AppiumPostingService()
+        self.warmup = WarmupService()
 
-    def execute(self, job_id: str):
+    def execute(self, job_id: str) -> bool:
         """
         Main entry point. Fetches the job doc, runs the full posting pipeline.
         All Firestore status transitions happen here.
+        Returns True if the post was successfully PUBLISHED, False otherwise.
         """
         job_ref = self.db.collection("job_queue").document(job_id)
         job = job_ref.get()
 
         if not job.exists:
             logger.error(f"Job {job_id} not found in Firestore.")
-            return
+            return False
 
         data = job.to_dict()
+        current_status = data.get("status")
+        if current_status == "PUBLISHED":
+            logger.warning(f"[{job_id}] Job already marked as PUBLISHED in Firestore. Skipping to prevent duplicates.")
+            return True
+
         gcs_uri = data.get("gcs_processed_video_uri") or data.get("gcs_raw_video_uri")
         ai_meta = data.get("ai_metadata", {})
         caption = ai_meta.get("caption", "")
         hashtags = ai_meta.get("hashtags", [])
-        full_caption = f"{caption}\n\n{' '.join(hashtags)}" if hashtags else caption
+        # Ensure all hashtags start with '#'
+        formatted_hashtags = [h if h.startswith("#") else f"#{h}" for h in hashtags]
+        full_caption = f"{caption}\n\n{' '.join(formatted_hashtags)}" if formatted_hashtags else caption
+        
+        tx_hash = data.get("digital_passport_tx_hash")
+        if tx_hash:
+            full_caption += f"\n\n🔗 Immutable Web3 Passport: {tx_hash}"
         
         # Audio muted flag set by the Downloader
         audio_muted = data.get("audio_muted", False)
@@ -72,7 +86,15 @@ class PostingController:
             # ── Step 2: Download processed video from GCS to device ──────────
             device_video_path = self._download_to_device(gcs_uri, job_id)
 
-            # ── Step 3: Stage on Instagram (no Share yet) ─────────────────────
+            # ── Step 3: Warm up account organically before posting ────────────
+            logger.info(f"[{job_id}] Initiating 1-minute organic warmup...")
+            self.warmup.perform_warmup(duration_minutes=1)
+
+            logger.info(f"[{job_id}] Force-stopping Instagram for clean posting state...")
+            self.adb.stop_instagram()
+            time.sleep(2)
+
+            # ── Step 4: Stage on Instagram (no Share yet) ─────────────────────
             self.appium.prepare_reel_post(
                 video_device_path=device_video_path,
                 caption=full_caption,
@@ -97,6 +119,8 @@ class PostingController:
                         "posted_at": firestore.SERVER_TIMESTAMP,
                     })
                     logger.info(f"[{job_id}] ✅ Posted to Instagram.")
+                    self._extract_and_save_shortcode(job_ref, job_id)
+                    return True
 
                 elif decision == "REJECTED":
                     self.appium.cancel_post()
@@ -105,6 +129,7 @@ class PostingController:
                         "rejected_at": firestore.SERVER_TIMESTAMP,
                     })
                     logger.info(f"[{job_id}] ❌ Post rejected by reviewer.")
+                    return False
 
                 else:  # timeout
                     self.appium.cancel_post()
@@ -113,6 +138,7 @@ class PostingController:
                         "error": f"No review decision after {REVIEW_TIMEOUT_MINUTES} minutes.",
                     })
                     logger.warning(f"[{job_id}] Review timed out.")
+                    return False
 
             else:
                 # Auto-post mode (HUMAN_REVIEW_ENABLED=false)
@@ -122,6 +148,8 @@ class PostingController:
                     "posted_at": firestore.SERVER_TIMESTAMP,
                 })
                 logger.info(f"[{job_id}] ✅ Auto-posted to Instagram.")
+                self._extract_and_save_shortcode(job_ref, job_id)
+                return True
 
         except Exception as e:
             logger.error(f"[{job_id}] Posting pipeline failed: {e}", exc_info=True)
@@ -131,6 +159,7 @@ class PostingController:
                 "failed_at": firestore.SERVER_TIMESTAMP,
             })
             self.appium.end_session()
+            return False
 
     # ── Private Helpers ────────────────────────────────────────────────────────
 
@@ -174,3 +203,31 @@ class PostingController:
             logger.debug(f"Waiting for review... current status: {status}")
             time.sleep(REVIEW_POLL_INTERVAL)
         return "timeout"
+
+    def _extract_and_save_shortcode(self, job_ref, job_id: str):
+        """
+        Waits for the reel to finish uploading, extracts the shortcode, and saves it to Firestore.
+        Implements a 30-second delay before force-closing Instagram as requested.
+        """
+        logger.info(f"[{job_id}] Waiting 30s for Meta to finalize Reel upload before extraction...")
+        time.sleep(30)
+        
+        try:
+            logger.info(f"[{job_id}] Extracting shortcode...")
+            shortcode = self.appium.grab_recent_reel_shortcode()
+            if shortcode:
+                # Update Firestore document with the extracted shortcode and link
+                job_ref.update({
+                    "instagram_shortcode": shortcode,
+                    "instagram_url": f"https://www.instagram.com/reel/{shortcode}/"
+                })
+                logger.info(f"[{job_id}] ✅ Saved shortcode {shortcode} to Firestore.")
+            else:
+                logger.warning(f"[{job_id}] ❌ Failed to extract shortcode.")
+        except Exception as e:
+            logger.error(f"[{job_id}] Error during shortcode extraction: {e}")
+        finally:
+            logger.info(f"[{job_id}] Waiting 30s before closing Instagram app as requested...")
+            time.sleep(30)
+            self.appium.end_session()
+            self.adb.stop_instagram()

@@ -1,37 +1,115 @@
 # config/creator_watchlist.yaml
 
-# Top Creator Watchlist for generic content (UC2)
-# The ingestor will scrape these profiles for new high-performing Reels.
-# Limits control the minimum engagement criteria for parsing.
+# Reconfigured for 100-Reel Industrial Stress Test (Milestone 36)
+# Focus: Racing, Lifestyle, Advanced Tech (Robotics/Drones)
+# Removed: Fashion, Beauty, Cricket.
 
 filters:
-  min_views: 500000      # 500K
-  min_likes: 10000
-  posted_within_days: 7
+  min_views: 100000
+  min_likes: 2000
+  posted_within_days: 14
   max_duration_seconds: 90
 
 creators:
-  fashion:
-    - "wisdm"
-    - "thefashioncouple"
-    - "teachingmensfashion"
-    
-  travel:
-    - "beautifuldestinations"
-    - "earthofficial"
-    - "taramilktea"
-    
-  entertainment:
-    - "netflix"
-    - "complex"
-    - "pubity"
-    
-  sport:
-    - "houseofhighlights"
+  sports_racing:
+    # GLOBAL SOCCER & US SPORTS (Preserved)
+    - "premierleague"
+    - "championsleague"
+    - "wwe"
+    - "nba"
+    - "nfl"
+    - "ufc"
+    - "realmadrid"
+    - "fcbarcelona"
+    - "manchesterunited"
+    - "liverpoolfc"
+    - "mancity"
+    - "psg"
+    - "fcbayern"
+    - "juventus"
     - "espn"
-    - "sportscenter"
-    
-  fun:
-    - "daquan"
-    - "fuckjerry"
-    - "kalesalad"
+    - "bleacherreport"
+    - "433"
+    - "redbull"
+    - "gopro"
+    # FORMULA ONE & RACING (NEW)
+    - "f1"
+    - "motogp"
+    - "redbullracing"
+    - "mercedesamgf1"
+    - "scuderiaferrari"
+    - "mclaren"
+    - "lewishamilton"
+    - "maxverstappen1"
+    - "charles_leclerc"
+    - "landonorris"
+    - "f1visuals"
+    - "motogp_official"
+    - "monsterenergy"
+    - "dirtbike_freaks"
+    - "superbikesgram"
+
+  ai_robotics_drones:
+    # AI TECH (PRESERVED & ENHANCED)
+    - "openai"
+    - "googledeepmind"
+    - "nvidiaai"
+    - "microsoft"
+    - "tesla"
+    - "huggingface"
+    - "anthropic"
+    - "mkbhd"
+    - "mrwhosetheboss"
+    # ROBOTICS & DRONES (NEW)
+    - "bostondynamicsofficial"
+    - "neuralink"
+    - "unitree_robotics"
+    - "robotics_insider"
+    - "dji_official"
+    - "droneoftheday"
+    - "drone_photography"
+    - "dronepals"
+    - "skydio"
+    - "autelrobotics"
+    - "fpvdrone"
+    - "fpvbook"
+
+  lifestyle_global:
+    # VILLAGE & DOWNTOWN (NEW)
+    - "villagelife_nature"
+    - "rural_life_style"
+    - "simple_village_life"
+    - "mountains_village"
+    - "downtown_nyc"
+    - "london_downtown"
+    - "tokyo_nightlife"
+    - "dubai_downtown"
+    - "citygrammers"
+    - "streetphotography"
+    - "urbanromantix"
+    - "beautifuldestinations"
+    - "wonderful_places"
+    - "voyaged"
+
+  finance:
+    - "bloomberg"
+    - "wsj"
+    - "cnbc"
+    - "financialtimes"
+    - "forbes"
+    - "businessinsider"
+    - "gpstephan"
+    - "andreijikh"
+    - "humphreyyang"
+
+  travel:
+    - "natgeotravel"
+    - "beautifuldestinations"
+    - "travelandleisure"
+    - "luxuryworldtraveler"
+    - "chrisburkard"
+    - "thebucketlistfamily"
+    - "yestheory"
+    - "lonelyplanet"
+    - "emirates"
+    - "qatarairways"
