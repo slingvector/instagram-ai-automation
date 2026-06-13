@@ -32,20 +32,73 @@ class VideoTranscription(BaseModel):
 
 class VertexAIService:
     """
-    Service layer to interface with Google Vertex AI for multimodal video analysis.
-    Uses Gemini 1.5 Flash via the modern google-genai SDK.
+    Service layer for multimodal video analysis via Gemini.
+    Auth priority:
+      1. GEMINI_API_KEY env var → Gemini Developer API (free tier via AI Studio)
+      2. Vertex AI with GCP service account (requires model access on project)
+    Includes a circuit breaker: after 2 consecutive 404s, all calls fail fast.
     """
+    _circuit_open = False  # Class-level circuit breaker
+    _consecutive_404s = 0
+    _CIRCUIT_BREAKER_THRESHOLD = 2
+
     def __init__(self, project_id: str, location: str = "us-central1"):
         self.project_id = project_id
         self.location = location
+        import os
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        self.is_developer_api = bool(api_key)
         try:
-            # Initialize the modern python SDK
-            self.client = genai.Client(vertexai=True, project=self.project_id, location=self.location)
+            if self.is_developer_api:
+                # Prefer free Gemini Developer API (AI Studio key)
+                self.client = genai.Client(api_key=api_key)
+                logger.info("Gemini AI Service initialized via API Key (AI Studio / Developer API).")
+            else:
+                # Fallback to Vertex AI (GCP service account)
+                self.client = genai.Client(vertexai=True, project=self.project_id, location=self.location)
+                logger.info("Gemini AI Service initialized via Vertex AI (GCP Service Account).")
             self.prompts = self._load_prompts()
-            logger.info("Vertex AI (google-genai) Service initialized.")
         except Exception as e:
-            logger.error(f"Failed to initialize Vertex AI: {e}")
+            logger.error(f"Failed to initialize Gemini AI: {e}")
             raise
+
+    def _get_video_part(self, gcs_video_uri: str) -> Any:
+        """
+        Helper to construct the video part based on the API mode.
+        Vertex AI supports gs:// URIs natively.
+        Developer API (AI Studio) requires uploading the file.
+        """
+        if not self.is_developer_api:
+            return types.Part.from_uri(file_uri=gcs_video_uri, mime_type="video/mp4")
+        
+        # Download from GCS locally to upload to AI Studio
+        import os
+        import tempfile
+        import subprocess
+        import time
+        
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            local_path = tmp.name
+        
+        try:
+            logger.info(f"Downloading {gcs_video_uri} for AI Studio upload...")
+            subprocess.run(["gcloud", "storage", "cp", gcs_video_uri, local_path], check=True, capture_output=True)
+            
+            logger.info("Uploading video to AI Studio File API...")
+            video_file = self.client.files.upload(file=local_path)
+            
+            logger.info("Waiting for AI Studio to process video...")
+            while video_file.state.name == "PROCESSING":
+                time.sleep(2)
+                video_file = self.client.files.get(name=video_file.name)
+            
+            if video_file.state.name == "FAILED":
+                raise Exception("AI Studio video processing failed.")
+                
+            return video_file
+        finally:
+            if os.path.exists(local_path):
+                os.remove(local_path)
 
     def _load_prompts(self) -> Dict[str, str]:
         """Loads prompt templates from config/ai_prompts.yaml."""
@@ -152,7 +205,12 @@ class VertexAIService:
     def _generate_with_retry(self, model: str, contents: Any, config: Any, max_retries: int = 3) -> Dict[str, Any]:
         """
         Calls Gemini generate_content with retries and safe JSON parsing.
+        Includes circuit breaker: if Vertex AI returns 404 repeatedly, fail fast.
         """
+        # Circuit breaker: fail immediately if Vertex AI is known to be down
+        if VertexAIService._circuit_open:
+            raise Exception("Vertex AI circuit breaker OPEN — model not available on this project. Skipping.")
+
         last_error = None
         for attempt in range(max_retries):
             try:
@@ -161,9 +219,19 @@ class VertexAIService:
                     contents=contents,
                     config=config
                 )
+                # Success — reset circuit breaker
+                VertexAIService._consecutive_404s = 0
                 return self._safe_json_parse(response.text)
             except Exception as e:
                 last_error = e
+                error_str = str(e)
+                # If it's a 404 (model not found), don't waste time retrying
+                if '404' in error_str and 'NOT_FOUND' in error_str:
+                    VertexAIService._consecutive_404s += 1
+                    if VertexAIService._consecutive_404s >= VertexAIService._CIRCUIT_BREAKER_THRESHOLD:
+                        VertexAIService._circuit_open = True
+                        logger.error("⚡ Vertex AI CIRCUIT BREAKER OPEN: Model not available. All future calls will skip instantly.")
+                    raise  # Don't retry 404s — they won't resolve
                 logger.warning(f"AI Attempt {attempt + 1}/{max_retries} failed: {e}. Retrying...")
                 import time
                 time.sleep(2 ** attempt) # Exponential backoff
@@ -182,11 +250,11 @@ class VertexAIService:
         try:
             logger.info(f"Sending video {gcs_video_uri} to Vertex AI for analysis...")
             
-            # The new genai SDK expects types.Part.from_uri rather than Part.from_uri
-            video_part = types.Part.from_uri(file_uri=gcs_video_uri, mime_type="video/mp4")
+            # Use the helper which handles GCS downloading if in Developer API mode
+            video_part = self._get_video_part(gcs_video_uri)
             
             metadata = self._generate_with_retry(
-                model='gemini-2.0-flash-001',
+                model='gemini-1.5-flash',
                 contents=[video_part, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.7, 
@@ -211,10 +279,10 @@ class VertexAIService:
         """
         try:
             logger.info(f"AI-Metadata: Analyzing {gcs_video_uri} with custom prompt...")
-            video_part = types.Part.from_uri(file_uri=gcs_video_uri, mime_type="video/mp4")
+            video_part = self._get_video_part(gcs_video_uri)
             
             response = self.client.models.generate_content(
-                model='gemini-2.0-flash-001',
+                model='gemini-1.5-flash',
                 contents=[video_part, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.0,
@@ -234,11 +302,10 @@ class VertexAIService:
         prompt = self.prompts.get("roi_detection", "Analyze this video clip and identify the ROI. Respond with JSON: {\"roi\": {...}}")
         try:
             logger.info(f"AI-ROI: Analyzing visual subject in {gcs_video_uri}...")
-            # The new genai SDK expects types.Part.from_uri rather than Part.from_uri
-            video_part = types.Part.from_uri(file_uri=gcs_video_uri, mime_type="video/mp4")
+            video_part = self._get_video_part(gcs_video_uri)
             
             return self._generate_with_retry(
-                model='gemini-2.0-flash-001',
+                model='gemini-1.5-flash',
                 contents=[video_part, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.0,
@@ -257,11 +324,10 @@ class VertexAIService:
         prompt = self.prompts.get("transcription_and_vibe", "Analyze the video. Transcribe words and segment into sentiment clusters. Respond with JSON.")
         try:
             logger.info(f"AI-Transcriber: Generating word-level sync for {gcs_video_uri}...")
-            # The new genai SDK expects types.Part.from_uri rather than Part.from_uri
-            video_part = types.Part.from_uri(file_uri=gcs_video_uri, mime_type="video/mp4")
+            video_part = self._get_video_part(gcs_video_uri)
             
             result = self.client.models.generate_content(
-                model='gemini-2.0-flash-001',
+                model='gemini-1.5-flash',
                 contents=[video_part, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.0,
@@ -297,7 +363,7 @@ class VertexAIService:
             if not text:
                 return True # Assume relevant if title is missing (better than dropping)
             response = self.client.models.generate_content(
-                model='gemini-2.0-flash-001',
+                model='gemini-1.5-flash',
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.0, # Deterministic

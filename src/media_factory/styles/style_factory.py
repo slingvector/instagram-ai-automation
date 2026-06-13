@@ -14,7 +14,7 @@ class StyleFactory:
         niche = niche.lower()
         
         # Mapping logic
-        if any(keyword in niche for keyword in ["travel", "outdoor", "lifestyle", "story", "beauty", "nature"]):
+        if any(keyword in niche for keyword in ["travel", "outdoor", "lifestyle", "story", "beauty", "nature", "fashion", "entertainment", "exotic"]):
             logger.info(f"StyleFactory: Selected 'CinematicPro' for niche '{niche}'")
             return CinematicPro(font_path)
         

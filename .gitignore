@@ -72,3 +72,8 @@ results.json
 
 # ── Archives ───────────────────────────────────────────────────────────────────
 config_archive_*/
+
+# ── Scratch & Docs ─────────────────────────────────────────────────────────────
+scratch/
+docs/files/
+docs/files.zip

@@ -19,6 +19,9 @@ class GoogleDriveService:
         self.scopes = ['https://www.googleapis.com/auth/drive.file']
         self.service = self._authenticate()
         self.root_folder_name = "Industrial Posting"
+        
+        # Override with explicit folder ID if provided (crucial for Service Accounts to avoid quota errors)
+        self.root_folder_id = os.getenv("GDRIVE_ROOT_FOLDER_ID")
 
     def _authenticate(self):
         import pickle
@@ -54,7 +57,8 @@ class GoogleDriveService:
 
     def _get_or_create_folder(self, name: str, parent_id: Optional[str] = None) -> str:
         """Finds or creates a folder by name."""
-        query = f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        safe_name = name.replace("\\", "\\\\").replace("'", "\\'")
+        query = f"name = '{safe_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         if parent_id:
             query += f" and '{parent_id}' in parents"
             
@@ -86,14 +90,18 @@ class GoogleDriveService:
         date_str = datetime.now().strftime("%Y-%m-%d")
         
         # 1. Get/Create Root
-        root_id = self._get_or_create_folder(self.root_folder_name)
+        if hasattr(self, 'root_folder_id') and self.root_folder_id:
+            root_id = self.root_folder_id
+            logger.info(f"DRIVE: Using explicitly configured root folder ID: {root_id}")
+        else:
+            root_id = self._get_or_create_folder(self.root_folder_name)
         
         # 2. Get/Create Batch or Date Folder
         target_folder_name = batch_folder_name if batch_folder_name else date_str
         parent_id = self._get_or_create_folder(target_folder_name, parent_id=root_id)
         
         # 3. Create Reel Folder
-        reel_folder_id = self._get_or_create_folder(title[:50], parent_id=parent_id)
+        reel_folder_id = self._get_or_create_folder(title[:150], parent_id=parent_id)
         
         # 4. Upload Video
         video_file = Path(video_path)

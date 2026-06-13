@@ -21,16 +21,18 @@ class CinematicPro(BaseStyle):
         # 1. Background (9:16 blurred)
         bg = self.get_916_background(v1)
         
-        # 2. Foreground with Ken Burns zoom (slow 1.1x zoom over time)
+        # 2. Dynamic ROI Framing
+        framed = self.apply_roi_framing(v2, roi, iw=width, ih=height)
+        
+        # 3. Ken Burns zoom (slow 1.1x zoom over time)
         fg = (
-            v2
-            .filter('scale', 1080, -1)
+            framed
             # Subtle slow zoom
-            .filter('zoompan', z='min(zoom+0.0005,1.1)', d=1, s='1080x600', x='iw/2-(iw/zoom/2)', y='ih/2-(ih/zoom/2)')
+            .filter('zoompan', z='min(zoom+0.0005,1.1)', d=1, s='1080x1920', x='iw/2-(iw/zoom/2)', y='ih/2-(ih/zoom/2)', fps=30)
         )
         
-        # 3. Layering & Grading
-        out = ffmpeg.overlay(bg, fg, y='(H-h)/2')
+        # 4. Layering & Grading
+        out = ffmpeg.overlay(bg, fg, x='(W-w)/2', y='(H-h)/2')
         
         # 4. Audio-Reactive "Breath" Effect
         out = self.apply_audio_pump(out, audio_peaks, intensity=pump_intensity)

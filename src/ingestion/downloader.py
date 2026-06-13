@@ -25,11 +25,10 @@ from .downloaders import YTDLPDownloader, SnapTikDownloader, TikAPIDownloader, T
 
 logger = logging.getLogger(__name__)
 
-# yt-dlp format: best video+audio up to 1080p, prefer mp4
+# yt-dlp format: Request best available video (usually 1080p for IG).
+# Strict height limits break Instagram extractors that don't tag resolution metadata properly.
 _YT_DLP_FORMAT = (
-    "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]"
-    "/bestvideo[height<=1080]+bestaudio"
-    "/best[height<=1080]/best"
+    "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
 )
 
 _MAX_RETRIES   = 3

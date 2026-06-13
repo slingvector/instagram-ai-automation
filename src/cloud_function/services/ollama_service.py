@@ -56,6 +56,10 @@ class OllamaService:
                 response_text = response_text.replace("```json", "").replace("```", "").strip()
             elif response_text.startswith("```"):
                 response_text = response_text.replace("```", "").strip()
+
+            # Sanitize invalid Unicode escapes (e.g. \uXXXX with non-hex chars)
+            import re
+            response_text = re.sub(r'\\u(?![0-9a-fA-F]{4})[^"]{0,4}', '', response_text)
                 
             metadata = json.loads(response_text)
             logger.info("Successfully generated AI copy via local Ollama.")

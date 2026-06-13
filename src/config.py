@@ -6,6 +6,10 @@ All GCP project IDs, bucket names, and shared settings live here.
 Individual modules should import from this file instead of hardcoding values.
 """
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ── GCP Core ─────────────────────────────────────────────────────────────────
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "")

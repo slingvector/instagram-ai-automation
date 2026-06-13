@@ -14,17 +14,9 @@ class ViralPulse(BaseStyle):
               width: int = 1920, height: int = 1080,
               template: Any = None):
         # 0. Split input for multi-branch usage
-        v1 = input_stream.video.split()
-        v2 = input_stream.video.split()
-        # Note: In ffmpeg-python, calling .split() twice on the same stream creates two branches
-        # Or better: use the split filter explicitly if needed, but for simplicity:
-        v1 = input_stream.video
-        v2 = input_stream.video
-        # Wait, if I use the same stream twice in different filters, ffmpeg-python handles the split.
-        # However, to be explicit and avoid issues:
-        split = input_stream.video.filter('split', 2)
-        v1 = split[0]
-        v2 = split[1]
+        split = input_stream.video.split()
+        v1 = split.stream(0)
+        v2 = split.stream(1)
 
         # 1. Background (9:16 blurred)
         bg = self.get_916_background(v1)

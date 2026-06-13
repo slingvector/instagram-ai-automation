@@ -91,12 +91,10 @@ class TrendingAdapter(SourceAdapter):
                 pass
             
             elif platform == Platform.INSTAGRAM:
-                # Instagram still uses legacy creator adapter for now
-                if src_type == "hashtag":
-                    yield from self._fetch_instagram_hashtag(value, filters.get("min_likes", 5000), niche=niche)
-                elif src_type == "creator":
-                    clean_user = value.strip().lstrip('@')
-                    yield from self._fetch_instagram_pages_bulk([{"username": clean_user}], effective_min_views, niche=niche)
+                # We now route BOTH creators and hashtags to the robust Playwright scraper
+                if src_type in ("hashtag", "creator"):
+                    target_dict = {src_type: value.strip().lstrip('@')}
+                    yield from self._fetch_instagram_pages_bulk([target_dict], effective_min_views, niche=niche)
             
             elif platform == Platform.YOUTUBE:
                 if src_type == "keyword":
@@ -578,9 +576,10 @@ class TrendingAdapter(SourceAdapter):
         import yaml # ensure yaml is imported in this scope
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
             # Use the provided niche in the mock config for CreatorAdapter
+            niche_str = effective_niche.value if hasattr(effective_niche, 'value') else str(effective_niche)
             mock_config = {
                 "filters": {"min_views": min_views or 100000}, 
-                "creators": {effective_niche: pages}
+                "creators": {niche_str: pages}
             }
             yaml.dump(mock_config, tmp)
             tmp_path = tmp.name

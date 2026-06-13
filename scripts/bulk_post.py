@@ -139,7 +139,25 @@ class BulkPosterStateMachine:
         self.local_ai = OllamaService(model="llama3.2")
         self.job_repo = JobRepository(project_id=PROJECT_ID)
         self.video_service = VideoProcessorService(project_id=PROJECT_ID)
-        self.drive_service = GoogleDriveService()
+        
+        from src.utils.localsend_service import LocalSendService
+        from src.utils.transcoder_service import HlsTranscoderService
+        from src.utils.firebase_relay_service import FirebaseRelayService
+        from dotenv import load_dotenv
+        import os
+        load_dotenv(override=True)
+        
+        self.localsend_service = LocalSendService(
+            target_ip=os.getenv("LOCALSEND_TARGET_IP"),
+            target_alias=os.getenv("LOCALSEND_ALIAS", "Galaxy S25")
+        )
+        self.hls_service = HlsTranscoderService(
+            project_id=PROJECT_ID,
+            cdn_host=os.getenv("RELAY_CDN_HOST")
+        )
+        self.firebase_service = FirebaseRelayService(
+            bucket_name=os.getenv("FIREBASE_BUCKET", "mcr-relay-1781190111.appspot.com")
+        )
 
     def discover_new_content(self, needed_count: int, exclude_platforms: List[str] = None, min_views: int = None):
         """Fetch new content AGGRESSIVELY using Broad Harvest mode."""
@@ -207,10 +225,10 @@ class BulkPosterStateMachine:
             logger.info(f"{tag} ── Processing reel: {reel_title}")
             
             try:
-                wait_time = self._process_single_reel(reel, tag, args=args)
-                if wait_time > 0:
+                did_sync, wait_time = self._process_single_reel(reel, tag, args=args)
+                if did_sync:
                     results["success"] += 1
-                    if i < total:
+                    if i < total and wait_time > 0:
                         logger.info(f"⏳ Waiting {wait_time // 60} minutes ({wait_time}s) before next reel...")
                         time.sleep(wait_time)
             except Exception as e:
@@ -226,11 +244,10 @@ class BulkPosterStateMachine:
         )
         release_lock()
 
-    def _process_single_reel(self, reel: Dict[str, Any], tag: str, args=None) -> int:
+    def _process_single_reel(self, reel: Dict[str, Any], tag: str, args=None) -> tuple[bool, int]:
         """
         Runs a reel through the state transitions until posted.
-        Returns the gap wait time in seconds if a real post occurred,
-        otherwise 0.
+        Returns (did_sync_new_reel, gap_wait_time_in_seconds).
         """
         url = reel['url']
         try:
@@ -246,7 +263,7 @@ class BulkPosterStateMachine:
                 if not meta:
                     logger.warning(f"{tag} ❌ Could not fetch metadata. Marking as failed.")
                     self.state_manager.mark_failed(url, "METADATA_FETCH_FAILED")
-                    return 0
+                    return False, 0
 
                 # 2. Calculate Engagement Rates
                 from src.ingestion.services.discovery_service import DiscoveryService
@@ -267,7 +284,7 @@ class BulkPosterStateMachine:
                 elif rates["like_rate"] < min_like_rate:
                     logger.warning(f"{tag} ❌ Rejected by Intelligence Gate: Like {rates['like_rate']:.3f} < {min_like_rate}")
                     self.state_manager.mark_failed(url, f"LOW_LIKE_RATE: {rates['like_rate']:.3f}")
-                    return 0
+                    return False, 0
                 else:
                     logger.info(f"{tag} ✅ Passed Intelligence Gate (Like: {rates['like_rate']:.3f}). Proceeding to DISCOVERED.")
                 self.state_manager.update_state(url, ReelState.DISCOVERED, title=meta.get('title', ''))
@@ -316,25 +333,31 @@ class BulkPosterStateMachine:
                     self.state_manager.update_state(url, ReelState.CAPTIONED, ai_metadata=metadata)
                     reel['ai_metadata'] = metadata
                     state = ReelState.CAPTIONED
+                    
+                    # 🛑 PAUSE PIPELINE HERE: Wait for manual dashboard approval
+                    logger.info(f"{tag} ⏸️ Pausing pipeline for Dashboard manual approval.")
+                    return True, 0
                 else:
                     logger.info(f"{tag} Skipping Captioning: Metadata already exists.")
                     state = ReelState.CAPTIONED
+                    return True, 0 # Already captioned, waiting for approval
             else:
-                logger.info(f"{tag} Skipping Captioning: Already completed.")
+                # If we skipped it, we don't return. We only skip if state was already past CAPTIONED.
+                # Actually, if state was JOB_CREATED, it wouldn't enter this block, so we just pass.
+                pass
 
-            # State 3: CAPTIONED -> JOB_CREATED
-            if state in [ReelState.CAPTIONED, ReelState.FAILED]:
-                if not reel.get('job_id'):
-                    logger.info(f"{tag} Creating Firestore job...")
+            # State 3: JOB_CREATED (from Dashboard) -> MEDIA_PROCESSED
+            # Note: We only enter here if the Dashboard set the state to JOB_CREATED
+            if state in [ReelState.JOB_CREATED, ReelState.FAILED]:
+                if not reel.get('job_id') and state == ReelState.JOB_CREATED:
+                    logger.info(f"{tag} Creating Firestore job from dashboard approval...")
                     job_id = self.job_repo.create_job(reel['gcs_uri'], reel['ai_metadata'])
                     self.state_manager.update_state(url, ReelState.JOB_CREATED, job_id=job_id)
                     reel['job_id'] = job_id
-                    state = ReelState.JOB_CREATED
                 else:
-                    logger.info(f"{tag} Skipping Job Creation: Job ID already exists.")
-                    state = ReelState.JOB_CREATED
+                    pass
             else:
-                logger.info(f"{tag} Skipping Job Creation: Already completed.")
+                pass
 
             # State 4: JOB_CREATED -> MEDIA_PROCESSED
             if state in [ReelState.JOB_CREATED, ReelState.FAILED]:
@@ -365,11 +388,9 @@ class BulkPosterStateMachine:
             else:
                 logger.info(f"{tag} Skipping Media Factory: Already completed.")
 
-            # State 5: MEDIA_PROCESSED -> SYNCED_TO_DRIVE
+            # State 5: MEDIA_PROCESSED -> RELAYED_TO_PHONE / RELAYED_TO_FIREBASE
             if state == ReelState.MEDIA_PROCESSED:
-                if not reel.get('drive_folder_id'):
-                    logger.info(f"{tag} 📁 Syncing to Google Drive...")
-                    
+                if not reel.get('state') == ReelState.RELAYED_TO_PHONE and not reel.get('state') == ReelState.RELAYED_TO_FIREBASE:
                     processed_uri = reel['processed_uri']
                     filename = os.path.basename(processed_uri)
                     local_processed_dir = os.path.join("data", "processed")
@@ -377,33 +398,51 @@ class BulkPosterStateMachine:
                     local_processed_path = os.path.join(local_processed_dir, filename)
                     
                     if not os.path.exists(local_processed_path):
-                        logger.info(f"{tag} Downloading processed video from GCS for Drive sync...")
+                        logger.info(f"{tag} Downloading processed video from GCS for Relay sync...")
                         self.uploader.download_file(processed_uri, local_processed_path)
                     
-                    metadata = reel['ai_metadata']
-                    hashtags = metadata.get("hashtags", "")
-                    if isinstance(hashtags, list):
-                        hashtags = " ".join(hashtags)
-                        
-                    caption = metadata.get("caption", "") + "\n\n" + hashtags
-                    # Ensure unique folder name by appending shortcode
-                    shortcode = url.strip('/').split('/')[-1] if '/' in url else "unknown"
-                    unique_title = f"{reel.get('title') or 'Untitled Reel'} [{shortcode}]"
+                    # 1. Attempt LocalSend (Primary Relay)
+                    logger.info(f"{tag} 🚀 Attempting LocalSend Relay to phone...")
+                    relay_success = self.localsend_service.push([local_processed_path])
                     
-                    drive_id = self.drive_service.upload_reel(local_processed_path, caption, unique_title)
-                    self.state_manager.update_state(url, ReelState.SYNCED_TO_DRIVE, drive_folder_id=drive_id)
-                    logger.info(f"{tag} ✅ Synced to Drive: {drive_id}")
-                    wait_time = GAP_SECONDS
+                    if relay_success:
+                        logger.info(f"{tag} ✅ Relayed to Phone via LocalSend!")
+                        self.state_manager.update_state(url, ReelState.RELAYED_TO_PHONE)
+                    else:
+                        # 2. Fallback to Firebase Storage (Progressive Streaming)
+                        logger.warning(f"{tag} ⚠️ LocalSend failed. Falling back to Firebase Storage...")
+                        firebase_url = self.firebase_service.relay_video(local_processed_path)
+                        
+                        if firebase_url:
+                            logger.info(f"{tag} ✅ Relayed to Firebase: {firebase_url}")
+                            self.state_manager.update_state(url, ReelState.RELAYED_TO_FIREBASE, firebase_url=firebase_url)
+                        else:
+                            logger.error(f"{tag} ❌ Both LocalSend and Firebase Relay failed.")
+                            self.state_manager.update_state(url, ReelState.FAILED, error_message="All relay methods failed")
+                            return False, 0
+                    
+                    # 3. Trigger Optional HLS Transcoder Job for Adaptive Cloud Delivery (Method 1)
+                    if self.hls_service.client and self.hls_service.cdn_host:
+                        logger.info(f"{tag} 📡 Triggering HLS Transcode job for CDN streaming...")
+                        # Transcoder needs a distinct output prefix
+                        shortcode = url.strip('/').split('/')[-1] if '/' in url else "unknown"
+                        output_prefix = f"gs://{self.video_service.bucket_name}/hls/{shortcode}/"
+                        hls_url = self.hls_service.submit_and_wait(processed_uri, output_prefix)
+                        if hls_url:
+                            logger.info(f"{tag} ✅ HLS Manifest generated: {hls_url}")
+                            self.state_manager.update_state(url, reel['state'], hls_cdn_url=hls_url)
+
+                    return True, GAP_SECONDS
                 else:
-                    logger.info(f"{tag} Skipping Drive Sync: Already synced.")
-                    wait_time = 0
+                    logger.info(f"{tag} Skipping Relay/Sync: Already synced or relayed.")
+                    return False, 0
         
         except Exception as e:
             logger.error(f"{tag} 🚨 FATAL UNHANDLED ERROR for {url}: {e}", exc_info=True)
             self.state_manager.mark_failed(url, f"Fatal Error: {str(e)}")
-            return 15 # Wait a bit before retry next reel
+            return False, 15 # Wait a bit before retry next reel
         
-        return wait_time
+        return False, 0
 
 
 def run():
@@ -417,7 +456,7 @@ def run():
     parser.add_argument("--min-views", type=int, help="Minimum views for discovery")
     parser.add_argument("--clear-dedup-discovery", action="store_true", help="Clear the discovery dedup database")
     parser.add_argument("--skip-preflight", action="store_true", help="Skip hardware pre-flight checks")
-    parser.add_argument("--config", type=str, default="config/discovery_manifest.yaml", help="Path to discovery manifest YAML")
+    parser.add_argument("--config", type=str, default="config/cricket_manifest.yaml", help="Path to discovery manifest YAML")
     parser.add_argument("--db", type=str, help="Path to isolated state database (SQLite)")
 
     args = parser.parse_args()

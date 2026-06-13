@@ -1,0 +1,183 @@
+discovered_creators:
+- platform: instagram
+  priority: high
+  type: creator
+  value: icc
+- platform: instagram
+  priority: high
+  type: creator
+  value: espncricinfo
+- platform: instagram
+  priority: high
+  type: creator
+  value: cricketcomau
+- platform: instagram
+  priority: high
+  type: creator
+  value: indiancricketteam
+- platform: instagram
+  priority: high
+  type: creator
+  value: bcci
+
+global_filters:
+  instagram:
+    min_comment_rate: 0.005
+    min_like_rate: 0.05
+    min_likes: 10000
+  youtube:
+    min_comment_rate: 0.005
+    min_like_rate: 0.05
+
+scoring:
+  immersion_weight: 0.4
+  motion_weight: 0.6
+  virality_weight: 0.3
+
+sources:
+# 1. Cover Drive
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: coverdrive
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: viratkohlicoverdrive
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: babarazamcoverdrive
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: coverdriveshots
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: perfectcoverdrive
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: classiccoverdrive
+
+# 2. Straight Drive
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: straightdrive
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: sachinstraightdrive
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: perfectstraightdrive
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: straightdriveshots
+
+# 3. Pull Shot & Hook Shot
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: pullshot
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: rohitsharmapullshot
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: hookshot
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: perfectpullshot
+
+# 4. Sweep Shot & Reverse Sweep
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: sweepshot
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: reversesweep
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: abdreversesweep
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: maxwellreversesweep
+
+# 5. Helicopter Shot
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: helicoptershot
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: msdhelicoptershot
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: dhonihelicoptershot
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: mshelishot
+
+# Additional General Aesthetics to hit the 10,000 Volume
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: cricketaesthetics
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: beautifulcricket
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: eleganceincricket
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: cricketshots
+- filters: {media_type: reels, min_likes: 10000}
+  niche: cricket
+  platform: instagram
+  type: hashtag
+  value: bestcricketshots

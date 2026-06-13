@@ -19,7 +19,10 @@ class ImmersiveClassifier:
         "riding": ["bike", "motorcycle", "mtb", "dh", "downhill", "ride", "motovlog", "cycling"],
         "diving": ["diving", "surf", "underwater", "wave", "ocean", "sea", "scuba"],
         "360_tiny_planet": ["360", "insta360", "tiny planet", "orbit", "reframe"],
-        "sports": ["nba", "nfl", "football", "soccer", "basketball", "highlights", "dunk", "goal", "touchdown", "slam dunk", "hoops", "sports"]
+        "sports": ["nba", "nfl", "football", "soccer", "basketball", "highlights", "dunk", "goal", "touchdown", "slam dunk", "hoops", "sports"],
+        "fashion": ["fashion", "streetwear", "ootd", "stylish", "runway", "outfit", "couture", "model"],
+        "entertainment": ["entertainment", "movie", "pop culture", "celebrity", "showbiz", "trend", "show"],
+        "exotic": ["exotic", "luxury", "exotic car", "mansions", "millionaire", "yacht", "villa"]
     }
 
     MOTION_KEYWORDS = ["fast", "insane", "speed", "crash", "jump", "flip", "adrenaline", "crazy", "unreal"]

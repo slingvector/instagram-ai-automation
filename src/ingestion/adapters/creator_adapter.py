@@ -124,8 +124,6 @@ class CreatorAdapter(SourceAdapter):
                 browser = p.chromium.launch(headless=self.headless, proxy=context_kwargs.get("proxy"))
                 context = browser.new_context(user_agent=context_kwargs["user_agent"], viewport=context_kwargs["viewport"])
             
-            page = context.pages[0] if context.pages else context.new_page()
-
             api_reels = {} # shortcode -> {views, likes}
             
             def extract_reels(data):
@@ -155,9 +153,6 @@ class CreatorAdapter(SourceAdapter):
                     except Exception:
                         pass
                         
-            page.on("response", handle_res)
-
-            # Flatten to list of (niche, dict) to process
             tasks = []
             for niche, accounts in creators.items():
                 for acc in accounts:
@@ -169,39 +164,53 @@ class CreatorAdapter(SourceAdapter):
             logger.info(f"Scanning {len(tasks)} creator profiles...")
 
             for niche, acc_info in tasks:
-                username = acc_info["username"]
+                if "username" in acc_info:
+                    username = acc_info["username"]
+                    display_name = f"@{username}"
+                    url = f"https://www.instagram.com/{username}/reels/"
+                elif "hashtag" in acc_info:
+                    hashtag = acc_info["hashtag"]
+                    display_name = f"#{hashtag}"
+                    url = f"https://www.instagram.com/explore/tags/{hashtag}/"
+                else:
+                    continue
+
                 follower_baseline = acc_info.get("follower_baseline", 0)
                 is_private = acc_info.get("is_private", False)
                 
-                logger.info(f"Visiting profile: @{username} (niche: {niche})")
+                logger.info(f"Visiting target: {display_name} (niche: {niche})")
                 
+                page = None
                 try:
-                    url = f"https://www.instagram.com/{username}/reels/"
+                    # Create a fresh page for each target to prevent Timeout cascades
+                    page = context.new_page()
+                    page.on("response", handle_res)
+                    
                     page.goto(url, wait_until="domcontentloaded")
                     self._human_delay(2, 4)
                     
-                    if follower_baseline == 0:
+                    if follower_baseline == 0 and "username" in acc_info:
                         follower_baseline = self._get_follower_count(page)
-                    logger.info(f"Creator @{username} mapped with {follower_baseline} followers.")
+                    logger.info(f"Target {display_name} mapped with {follower_baseline} followers/baseline.")
                     
-                    # Ensure page loaded correctly (look for reel links or standard IG markers)
+                    # Ensure page loaded correctly (look for reel/p links)
                     try:
-                        page.wait_for_selector("a[href*='/reel/']", timeout=10_000)
+                        page.wait_for_selector("a[href*='/reel/'], a[href*='/p/']", timeout=10_000)
                     except Exception:
-                        logger.debug(f"Could not find Reels tab for @{username} (might be private or empty).")
+                        logger.debug(f"Could not find Reels/Posts for {display_name} (might be private, empty, or rate limited).")
                         continue
                         
                     # Extract reel hrefs with scrolling for deeper yield
                     shortcodes = []
-                    for _ in range(3): # Scroll 3 times to get ~36-50 reels
-                        links = page.locator("a[href*='/reel/']").all()
+                    for _ in range(50): # Scroll 50 times for massive hashtag yield (thousands of videos)
+                        links = page.locator("a[href*='/reel/'], a[href*='/p/']").all()
                         for link in links:
                             href = link.get_attribute("href")
                             if href:
                                 parts = href.strip('/').split('/')
-                                if len(parts) >= 2 and parts[-2] == "reel":
+                                if len(parts) >= 2 and parts[-2] in ("reel", "p"):
                                     shortcodes.append(parts[-1])
-                        page.mouse.wheel(0, 2000)
+                        page.mouse.wheel(0, 3000)
                         self._human_delay(1, 2)
                                 
                     # Deduplicate shortcodes in this scrape
@@ -210,7 +219,7 @@ class CreatorAdapter(SourceAdapter):
                     
                     for shortcode in shortcodes:
                         reel_url = f"https://www.instagram.com/reel/{shortcode}/"
-                        message_id = f"creator::{username}::{shortcode}"
+                        message_id = f"target::{display_name}::{shortcode}"
                         
                         # Use DM dedup table to avoid re-processing same reel (we leverage the existing table)
                         if self.dedup.is_dm_seen(message_id):
@@ -263,22 +272,34 @@ class CreatorAdapter(SourceAdapter):
                                 view_count=views,
                                 like_count=likes,
                                 shortcode=shortcode,
-                                raw_metadata={"creator": username, "source_profile": url}
+                                raw_metadata={"source_target": display_name, "source_profile": url}
                             )
                             # ONLY register in dedup if we are actually yielding it as a hit
                             self.dedup.register_dm(message_id, url, reel_url)
                             yield item
-                            logger.info(f"✅ Found viral reel! @{username}/{shortcode} (Views: {views}, Likes: {likes})")
+                            logger.info(f"✅ Found viral reel! {display_name}/{shortcode} (Views: {views}, Likes: {likes})")
                         else:
                             # Not viral enough. We DON'T register in dedup here so that if the user 
                             # lowers thresholds later, we can still discover it.
                             pass
 
                 except Exception as e:
-                    logger.error(f"Error scraping creator @{username}: {e}", exc_info=True)
+                    logger.error(f"Error scraping target {display_name}: {e}")
+                finally:
+                    if page:
+                        try:
+                            page.close()
+                        except Exception:
+                            pass
                     
                 self._human_delay(3, 6) # Delay between accounts
 
+            # Close any dangling pages
+            for p in context.pages:
+                try:
+                    p.close()
+                except Exception:
+                    pass
             context.close()
 
     @staticmethod

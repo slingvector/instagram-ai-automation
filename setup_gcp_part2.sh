@@ -1,12 +1,12 @@
 #!/bin/bash
 set -e
 
-PROJECT_ID="mcr-relay-1772228380"
+PROJECT_ID="mcr-relay-1781190111"
 echo "Resuming setup for Project $PROJECT_ID..."
 gcloud config set project $PROJECT_ID
 
 echo "Creating Firestore Database..."
-gcloud firestore databases create --location=us-central1 --type=firestore-native
+gcloud firestore databases create --location=us-central1 --type=firestore-native || true
 
 echo "Setting up Service Account..."
 SA_NAME="modernos-edge-agent"

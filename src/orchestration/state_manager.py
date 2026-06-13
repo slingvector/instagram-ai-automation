@@ -18,6 +18,8 @@ class ReelState:
     JOB_CREATED = "JOB_CREATED"
     MEDIA_PROCESSED = "MEDIA_PROCESSED"
     SYNCED_TO_DRIVE = "SYNCED_TO_DRIVE"
+    RELAYED_TO_PHONE = "RELAYED_TO_PHONE"
+    RELAYED_TO_FIREBASE = "RELAYED_TO_FIREBASE"
     POSTING = "POSTING"
     POSTED = "POSTED"
     FAILED = "FAILED"
@@ -48,6 +50,8 @@ class StateManager:
                     job_id TEXT,
                     processed_uri TEXT,
                     drive_folder_id TEXT,
+                    hls_cdn_url TEXT,
+                    firebase_url TEXT,
                     tx_hash TEXT,
                     error_message TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -63,6 +67,12 @@ class StateManager:
             except sqlite3.OperationalError: pass
             try:
                 cursor.execute("ALTER TABLE reel_states ADD COLUMN drive_folder_id TEXT")
+            except sqlite3.OperationalError: pass
+            try:
+                cursor.execute("ALTER TABLE reel_states ADD COLUMN hls_cdn_url TEXT")
+            except sqlite3.OperationalError: pass
+            try:
+                cursor.execute("ALTER TABLE reel_states ADD COLUMN firebase_url TEXT")
             except sqlite3.OperationalError: pass
             conn.commit()
 
@@ -101,12 +111,24 @@ class StateManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            states = [ReelState.POSTED, ReelState.POSTING]
+            states = [ReelState.POSTED, ReelState.POSTING, ReelState.CAPTIONED, ReelState.SYNCED_TO_DRIVE, ReelState.RELAYED_TO_PHONE, ReelState.RELAYED_TO_FIREBASE]
             if not include_failed:
                 states.append(ReelState.FAILED)
                 
             placeholders = ', '.join(['?'] * len(states))
-            query = f"SELECT * FROM reel_states WHERE state NOT IN ({placeholders}) ORDER BY created_at ASC"
+            query = f"""
+                SELECT * FROM reel_states 
+                WHERE state NOT IN ({placeholders}) 
+                ORDER BY 
+                    CASE state 
+                        WHEN 'JOB_CREATED' THEN 1 
+                        WHEN 'DOWNLOADED' THEN 2
+                        WHEN 'DISCOVERED' THEN 3
+                        WHEN 'SCANNED' THEN 4
+                        ELSE 5 
+                    END ASC, 
+                    created_at ASC
+            """
             
             cursor.execute(query, tuple(states))
             
@@ -125,7 +147,7 @@ class StateManager:
 
         # Valid fields to update mapping
         # Ensure we only update columns that exist
-        valid_columns = ["gcs_uri", "ai_metadata", "job_id", "processed_uri", "drive_folder_id", "tx_hash", "error_message", "title"]
+        valid_columns = ["gcs_uri", "ai_metadata", "job_id", "processed_uri", "drive_folder_id", "hls_cdn_url", "firebase_url", "tx_hash", "error_message", "title"]
         
         for key, val in kwargs.items():
             if key in valid_columns:

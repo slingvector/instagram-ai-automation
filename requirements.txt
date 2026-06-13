@@ -47,3 +47,5 @@ opencv-python>=4.8.0
 # ── AI Engines ──────────────────────────────────────────────────────────────
 openai>=1.0.0
 google-cloud-aiplatform>=1.38.0
+google-cloud-video-transcoder
+firebase-admin

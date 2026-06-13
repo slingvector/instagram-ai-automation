@@ -36,5 +36,5 @@ COPY config/ /app/config/
 # We map PYTHONPATH so python can resolve 'src' as a module
 ENV PYTHONPATH=/app
 
-# Start the concurrent ingestion daemon
-CMD ["python", "src/ingestion/scheduler.py"]
+# Start the endless Google Drive upload daemon
+CMD ["python", "scripts/daemon_post.py"]
