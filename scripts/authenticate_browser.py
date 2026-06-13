@@ -62,7 +62,17 @@ def run():
         except Exception:
             pass
             
-        print("Browser closed. Persistent state saved to 'data/browser_session/'.")
+        print("Browser closed. Saving cross-platform cookies to ig_cookies.json...")
+        try:
+            cookies = context.cookies("https://www.instagram.com")
+            import json
+            with open("data/ig_cookies.json", "w") as f:
+                json.dump(cookies, f)
+            print("✅ Successfully exported raw cookies for Docker compatibility!")
+        except Exception as e:
+            print(f"⚠️ Failed to export cookies: {e}")
+            
+        print("Persistent state saved to 'data/browser_session/'.")
 
 if __name__ == "__main__":
     run()

@@ -123,6 +123,18 @@ class CreatorAdapter(SourceAdapter):
                 # Remove user_data_dir and launch regular browser
                 browser = p.chromium.launch(headless=self.headless, proxy=context_kwargs.get("proxy"))
                 context = browser.new_context(user_agent=context_kwargs["user_agent"], viewport=context_kwargs["viewport"])
+                
+            # Inject cross-platform cookies to solve Mac Host -> Linux Docker incompatibility
+            if Path("data/ig_cookies.json").exists():
+                try:
+                    import json
+                    with open("data/ig_cookies.json", "r") as f:
+                        cookies = json.load(f)
+                        if cookies:
+                            context.add_cookies(cookies)
+                            logger.info(f"Injected {len(cookies)} cross-platform cookies into context.")
+                except Exception as e:
+                    logger.warning(f"Failed to inject cross-platform cookies: {e}")
             
             api_reels = {} # shortcode -> {views, likes}
             
