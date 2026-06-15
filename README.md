@@ -1,149 +1,80 @@
-# instagram-ai-automation
+# Instagram AI Automation (V2 Pipeline)
 
-> **ModernOS Content Relay (MCR)** — A fully automated Instagram Reel posting pipeline powered by Appium, ADB, and Gemini AI.
+> **ModernOS Content Relay (MCR)** — An automated Instagram Reel ingestion and processing pipeline.
 
 ## What It Does
 
-1. **Scrapes** a source Instagram Reel URL
-2. **Downloads & processes** the video (via cloud media factory)
-3. **Pushes** the video to an Android device
-4. **Automates** the entire Instagram posting flow (gallery → editor → caption → Share) using Appium + ADB
-5. **Stages a draft** and waits for human approval in Firestore before posting live
+1. **Precision Targeting**: Harvests reels directly from targeted creators via curated manifests (e.g., `config/fashion_manifest.yaml`).
+2. **AI Action-Zone Cropping**: Uses Vertex AI to analyze landscape videos and intelligently re-frame the primary subject to a native 9:16 portrait cut.
+3. **Kinetic Typography**: Generates word-level timestamps and cinematic kinetic captions using FFmpeg.
+4. **Relay Engine**: Sends processed videos securely to your phone via local Wi-Fi (LocalSend) or to Firebase Storage for CDN delivery.
+5. **Dashboard**: A gorgeous Next.js GUI for manually reviewing and approving videos.
 
 ---
 
-## Architecture
+## 🚀 Easy Local Setup (Docker Compose)
 
-```
-[Reel URL]
-    │
-    ▼
-src/scraper/              ← Scrape reel metadata + download video
-    │
-    ▼
-src/media_factory/        ← Process, resize, watermark video
-    │
-    ▼
-src/cloud_function/       ← GCP Cloud Function: trigger + orchestrate
-    │
-    ▼
-src/publishing_edge/      ← Android device automation (Appium + ADB)
-    ├── controllers/      ← PostingController: orchestrates the pipeline
-    └── services/
-        ├── appium_posting_service.py  ← Full Instagram UI automation
-        └── adb_client.py              ← ADB helper (tap, screenshot, push)
-    │
-    ▼
-[Firestore APPROVED]
-    │
-    ▼
-share_post()              ← Taps Share → Reel goes live
-```
-
----
-
-## Tools
-
-### `tools/record_flow.py` — Flow Recorder
-Records a screen video + XML UI snapshots while you manually perform any Instagram flow.  
-Used to teach the automation new flows and debug coordinate issues.
-
-```bash
-python tools/record_flow.py create_reel
-# Open Instagram, do the flow, close app → session saved in recordings/
-```
-
-### `tools/analyze_flow.py` — AI Flow Analyzer
-Reads a recorded session, detects screen transitions from XML diffs, and uses Gemini AI
-to generate Python automation step stubs.
-
-```bash
-python tools/analyze_flow.py recordings/create_reel_20260228_192731
-```
-
----
-
-## Setup
+The easiest way to run the pipeline without installing Python, Node.js, FFmpeg, or browser drivers on your host machine is via Docker Compose.
 
 ### Prerequisites
-- Python 3.11+
-- Android device with USB debugging enabled
-- Appium v3.x + UiAutomator2 driver
-- GCP project with Firestore + Cloud Storage
+- Docker & Docker Compose installed.
+- A valid `.env` file with your GCP / Firebase credentials.
 
-### Install
+### Instructions
 
-```bash
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-```
+1. **Clone the Repository**
+2. **Set up credentials**
+   ```bash
+   cp .env.example .env
+   # Ensure your google service account JSON is placed in the project root
+   ```
+3. **Boot the Pipeline & Dashboard**
+   ```bash
+   docker-compose up -d
+   ```
 
-### Environment Variables
+This will automatically:
+- Start the `backend` Python container which continuously scrapes and processes videos into the `./data` directory.
+- Start the `dashboard` Next.js container on port `3000`.
 
-Copy `.env.example` to `.env` and fill in:
-
-```bash
-cp .env.example .env
-```
-
-| Variable | Description |
-|---|---|
-| `DEVICE_UDID` | ADB device serial (`adb devices`) |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Path to GCP service account JSON |
-| `FIRESTORE_PROJECT_ID` | Your GCP project ID |
-| `GCS_BUCKET_PROCESSED` | GCS bucket for processed videos |
-
-### Start Appium
-
-```bash
-export ANDROID_HOME=/opt/homebrew
-appium
-```
-
-### Run a Test Post
-
-```bash
-python test_post_bg.py
-```
+You can now view your dashboard locally at: [http://localhost:3000](http://localhost:3000)
 
 ---
 
-## How the XML-Based UI Automation Works
+## 🌍 Remote Access (View Dashboard Anywhere)
 
-Rather than hardcoding pixel coordinates, every interaction uses a **3-strategy approach**:
+If you are running the Docker Compose stack on your Mac or a local server, and want to access the Dashboard securely from your phone or while traveling, use a **Cloudflare Tunnel**. It is completely free and requires zero router configuration.
 
-1. **Appium element find** (by XPath / AccessibilityId)
-2. **XML page_source scan** — dump the live UI tree, find elements by `text` / `content-desc` / `resource-id`
-3. **ADB tap at known coords** — confirmed from real device XML recordings
+### Cloudflare Tunnel Setup (1-Click)
 
-### `tools/record_flow.py` was key
-The recorder revealed the **exact element tree** on a 1440×3120 Samsung device:
-- `"Video thumbnail"` in `content-desc` → identifies the correct gallery item
-- `"Next"` at `(1237, 2969)` — bottom-right corner, not top-right
-- `AutoCompleteTextView` at `(720, 1674)` — the caption field
+Run this command in a new terminal window on the machine running Docker:
+
+```bash
+cloudflared tunnel --url http://localhost:3000
+```
+
+*(If you don't have `cloudflared` installed, install it via `brew install cloudflare/cloudflare/cloudflared` on Mac or download the binary).*
+
+Cloudflare will instantly output a secure, public HTTPS URL (e.g., `https://random-words.trycloudflare.com`). 
+You can visit this URL on any device anywhere in the world, and it will securely route to your local dashboard and video files!
 
 ---
 
-## Debug Screenshots
-
-Every pipeline run saves per-step screenshots + XML dumps to `debug/`:
+## Architecture Overview
 
 ```
-debug/
-  191229_01_instagram_launched.png
-  191250_02_after_create_tap.png
-  191257_03_after_reel_select.png
-  191308_04_after_video_select.png
-  191350_05_after_next.png
-  195827_06_caption_entered.png
+[Target Manifests]
+    │
+    ▼
+[Backend Container] (Python)
+    ├── Scrape & Download 
+    ├── AI Reframe (Vertex AI)
+    ├── Transcribe & Burn (FFmpeg)
+    └── Write to SQLite DB
+    │
+    ▼
+[Shared Volume] (./data)
+    │
+    ▼
+[Dashboard Container] (Next.js)  <──  [Cloudflare Tunnel]  <──  Your Phone (Anywhere)
 ```
-
----
-
-## Roadmap
-
-- [ ] Full URL-to-post pipeline (Reel URL → download → process → post)
-- [ ] Android Media Scanner trigger after video push
-- [ ] `share_post()` validation + capture post URL
-- [ ] Multi-account support
-- [ ] Self-healing via XML cache + Gemini Vision fallback

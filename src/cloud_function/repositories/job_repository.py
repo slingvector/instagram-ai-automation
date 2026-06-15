@@ -47,3 +47,16 @@ class JobRepository:
         except Exception as e:
             logger.error(f"Failed to write to Firestore: {e}")
             raise
+
+    def update_job(self, job_id: str, data: Dict[str, Any]):
+        """
+        Updates an existing job document with new data (e.g., processed_uri, status).
+        """
+        try:
+            doc_ref = self.db.collection(self.collection_name).document(job_id)
+            data["updated_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+            doc_ref.update(data)
+            logger.info(f"Successfully updated Firestore job document: {job_id}")
+        except Exception as e:
+            logger.error(f"Failed to update Firestore job {job_id}: {e}")
+            raise

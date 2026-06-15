@@ -3,3 +3,5 @@ google-cloud-firestore==2.14.0
 ffmpeg-python==0.2.0
 Flask==3.0.0
 gunicorn==21.2.0
+
+web3>=6.15.0

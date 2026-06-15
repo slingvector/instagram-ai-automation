@@ -1,0 +1,90 @@
+sources:
+- platform: instagram
+  type: creator
+  value: redbull
+  niche: adrenaline
+  filters:
+    min_likes: 5000
+- platform: tiktok
+  type: keyword
+  value: fpv drone racing
+  niche: adrenaline
+  filters:
+    min_likes: 5000
+- platform: instagram
+  type: creator
+  value: gopro
+  niche: adrenaline
+  filters:
+    min_likes: 3000
+- platform: instagram
+  type: creator
+  value: johnny_fpv
+  niche: adrenaline
+- platform: instagram
+  type: creator
+  value: fpv_drone_racing
+  niche: adrenaline
+- platform: instagram
+  type: hashtag
+  value: fpv
+  niche: adrenaline
+  filters:
+    min_likes: 1000
+- platform: youtube
+  type: creator
+  value: UC7uS6O8Vv8p_B6Y_E4u82zA # Red Bull
+  niche: adrenaline
+- platform: youtube
+  type: creator
+  value: UCqhnX4jA0A5paPb1DzlfJXg # GoPro
+  niche: adrenaline
+- platform: youtube
+  type: creator
+  value: UC8mOCLpqS6u76pD_hU8K_1w # Mr Steele
+  niche: adrenaline
+- platform: youtube
+  type: keyword
+  value: insane fpv drone freestyle
+  niche: adrenaline
+  filters:
+    min_views: 5000
+- platform: instagram
+  type: creator
+  value: houseofhighlights
+  niche: sports
+- platform: instagram
+  type: creator
+  value: f1
+  niche: adrenaline
+- platform: tiktok
+  type: keyword
+  value: extreme sports pov
+  niche: adrenaline
+
+global_filters:
+  tiktok:
+    min_views: 5000
+    min_like_rate: 0.02
+    min_comment_rate: 0.005
+    downloader_policy: snaptik
+  instagram:
+    min_likes: 1000
+    min_like_rate: 0.03
+    min_comment_rate: 0.005
+  youtube:
+    min_views: 5000
+    min_like_rate: 0.02
+    min_comment_rate: 0.003
+
+scoring:
+  motion_weight: 0.6
+  immersion_weight: 0.4
+  virality_weight: 0.3
+
+discovered_creators:
+- platform: youtube
+  type: creator
+  value: quadmovr
+  discovery_origin: fpv drone cinematic shorts
+  priority: normal

@@ -1,10 +1,10 @@
 from flask import jsonify, Request
 import logging
 import os
-from services.vertex_ai_service import VertexAIService
-from repositories.job_repository import JobRepository
+from src.cloud_function.services.vertex_ai_service import VertexAIService
+from src.cloud_function.repositories.job_repository import JobRepository
 
-from services.media_factory_trigger_service import MediaFactoryTriggerService
+from src.cloud_function.services.media_factory_trigger_service import MediaFactoryTriggerService
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def process_webhook(request: Request):
     gcs_uri = request_json['gcs_video_uri']
     logger.info(f"Received webhook for video: {gcs_uri}")
     
-    project_id = os.environ.get("GCP_PROJECT_ID", "mcr-relay-1772228380")
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
     factory_url = os.environ.get("MEDIA_FACTORY_URL", "https://mcr-media-factory-1068721430700.us-central1.run.app")
     
     try:

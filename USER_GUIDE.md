@@ -137,3 +137,9 @@ By default, the pipeline stages drafts in the Instagram app and waits.
 - **Playwright errors (Ingestion):** If Playwright fails to load IG, try setting `HEADLESS="False"` in `.env` and run `python test_dm_scraper.py`. This opens a visible browser so you can manually solve a CAPTCHA or confirm the login on the Read-Only account.
 - **"Could not find a connected Android device" (Appium):** Your Docker container has lost sync with the host ADB socket. Rerun the two commands under Section 5 to restart the host ADB server and the docker container.
 - **UI element not found (Appium):** Instagram occasionally changes its layout. Look in the `debug/` folder; the bot saves XML state dumps and screenshots (`<timestamp>_step_name.png`) exactly where it failed. Update the fallback ADB coordinates in `src/publishing_edge/services/appium_posting_service.py` if the UI buttons have moved drastically on your specific device resolution.
+- **Appium Crash (`java.lang.IllegalStateException: UiAutomation not connected`):** Occasionally, the Android OS kills the hidden Appium background services to save battery or manage resources, which breaks the physical screen connection. To fix this:
+  1. Open your Android device's **Settings -> Apps** menu.
+  2. Search for `Appium`.
+  3. Manually uninstall **"Appium Settings"**, **"Appium UiAutomator2 Server"**, and **"Appium UiAutomator2 Server Test"**.
+  4. Rerun the Python Appium script. The backend will automatically push fresh, working copies of these apps back to the phone on the next connection attempt.
+- **Clipboard Failures:** See [docs/CLIPBOARD_MECHANICS.md](docs/CLIPBOARD_MECHANICS.md) for technical setup and troubleshooting of text entry via ADB.

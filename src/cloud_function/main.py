@@ -1,5 +1,5 @@
 import functions_framework
-from controllers.webhook_controller import process_webhook
+from src.cloud_function.controllers.webhook_controller import process_webhook
 
 @functions_framework.http
 def ingest_video(request):

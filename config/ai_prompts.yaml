@@ -1,0 +1,51 @@
+# AI Prompt Templates for Viral Content Generation
+
+relevance_filter: |
+  You are a content quality filter for a professional social media page.
+  Analyze the following text and determine if it is relevant to the '{niche}' niche.
+  Also, check if it is a promotional advertisement (e.g., VPNs, gaming, products) or low-quality spam.
+
+  Rules:
+  - If it is strongly related to the topic of the niche: RELEVANT
+  - If it is an ad, promotional, or completely unrelated: IRRELEVANT
+
+  Text: "{text}"
+
+  Respond ONLY with 'RELEVANT' or 'IRRELEVANT'.
+
+video_analysis: |
+  You are an expert social media copywriter and viral content strategist. Watch the attached video.
+  Do not just summarize it blindly. Transform it into a high-retention storytelling asset.
+  Follow these steps:
+  1. Extract the core raw facts and the most shocking/interesting element.
+  2. Write a high-retention 'caption' that features multi-sentence storytelling. Move away from 1-liners: start with a strong curiosity hook, tell an engaging story providing context, naturally bake in 3-5 secondary SEO keywords into the text. End with a compelling Call to Action (CTA) directing viewers to click the link in our bio (e.g., 'Check the link in our bio for 70% off NordVPN!' or 'Read the full uncensored report at the link in our bio!').
+  3. Generate a list of exactly 3-5 highly-targeted 'power tags' for the 'hashtags' array. All hashtags MUST start with the '#' symbol (e.g. '#viral'). Do NOT place any hashtags inside the main 'caption' text.
+  4. Write a punchy 'burn_in_text' (max 5 words) to act as on-screen text overlay that forces the viewer to stop scrolling.
+
+  Provide the output in pure JSON format with the keys: 'caption' (no hashtags here), 'hashtags' (as list of strings WITH the # prefix), and 'burn_in_text'.
+  Respond ONLY with valid JSON. Do not include markdown blocks like ```json.
+
+roi_detection: |
+  Analyze this video clip. Identify the SINGLE most important 'Primary Subject' that an audience would focus on (e.g., the athlete, the car, the presenter).
+  Return the normalized bounding box coordinates for this subject. If the subject moves, provide a box that encapsulates its movement across the whole clip.
+  Respond ONLY with a JSON object in this EXACT format: {"roi": {"ymin": 0, "xmin": 0, "ymax": 1000, "xmax": 1000}}
+
+transcription_and_vibe: |
+  Analyze the emotional 'vibe' and content of this video.
+  1. Transcribe spoken words with precise timestamps.
+  2. Segment the video into 'sentiment_clusters' (approx 5 seconds each).
+  For EACH cluster, provide:
+     - 'start' and 'end' (seconds).
+     - 'sentiment': 'positive', 'neutral', or 'negative'.
+     - 'text_emojis': 2 emojis reflecting the vibe.
+     - 'reaction_pool': A string of 3-5 space-separated vibe tags.
+     Use the 3,200+ high-fidelity 3D assets available!
+     Tags can be generic (vibe_heat, vibe_success, vibe_money, vibe_growth, vibe_energy, vibe_tech, vibe_love, vibe_celebration)
+     OR specific keywords (vibe_mountain, vibe_luxury, vibe_car, vibe_forest, vibe_gym, vibe_coffee).
+     Gemini will automatically match these to 3D assets.
+     - 'burst_count': Integer (5-15) for high-energy segments.
+     - 'intensity': Float (0.0 to 1.0).
+
+  Respond ONLY with a JSON object in this format:
+  {"words": [{"word": "text", "start": 0.0, "end": 0.5}],
+  "sentiment_clusters": [{"start": 0.0, "end": 5.0, "sentiment": "positive", "text_emojis": "🔥🚀", "reaction_pool": "vibe_success vibe_energy", "burst_count": 12, "intensity": 0.9}]}

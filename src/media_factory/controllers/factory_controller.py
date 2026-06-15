@@ -1,8 +1,12 @@
 from flask import jsonify
 import logging
 import os
-from repositories.processed_job_repository import ProcessedJobRepository
-from services.video_processor_service import VideoProcessorService
+from dotenv import load_dotenv
+load_dotenv()
+
+from src.config import GCP_PROJECT_ID
+from src.media_factory.repositories.processed_job_repository import ProcessedJobRepository
+from src.media_factory.services.video_processor_service import VideoProcessorService
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +14,7 @@ def process_job(job_id: str):
     """
     Controller logic to orchestrate downloading, processing, and uploading.
     """
-    project_id = os.environ.get("GCP_PROJECT_ID", "mcr-relay-1772228380")
+    project_id = GCP_PROJECT_ID
     
     try:
         # Initialize Services and Repositories
@@ -26,6 +30,7 @@ def process_job(job_id: str):
         # 2. Extract metadata
         ai_metadata = job_data.get("ai_metadata", {})
         burn_in_text = ai_metadata.get("burn_in_text", "")
+        caption_text = ai_metadata.get("caption", "")
         raw_video_uri = job_data.get("gcs_raw_video_uri", "")
         
         if not raw_video_uri:
@@ -34,16 +39,17 @@ def process_job(job_id: str):
              
         # 3. Process the video
         logger.info(f"Starting video processing pipeline for: {raw_video_uri}")
-        processed_uri = video_service.apply_burn_in(raw_video_uri, burn_in_text, job_id)
+        processed_uri, tx_receipt = video_service.apply_burn_in(raw_video_uri, burn_in_text, caption_text, job_id)
         
         # 4. Update Firestore Status
         logger.info(f"Updating job {job_id} status to READY_FOR_PUBLISHING")
-        firestore_repo.mark_job_completed(job_id, processed_uri)
+        firestore_repo.mark_job_completed(job_id, processed_uri, tx_receipt)
         
         return jsonify({
             "status": "success", 
             "job_id": job_id, 
-            "processed_video_uri": processed_uri
+            "processed_video_uri": processed_uri,
+            "digital_passport_tx_hash": tx_receipt
         }), 200
         
     except Exception as e:

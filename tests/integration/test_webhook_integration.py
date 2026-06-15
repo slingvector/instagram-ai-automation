@@ -6,7 +6,7 @@ import os
 # We need to set the environment variable before importing the function
 os.environ["GCP_PROJECT_ID"] = "test-project"
 
-from main import ingest_video
+from src.cloud_function.main import ingest_video
 import flask
 
 @pytest.fixture
@@ -15,9 +15,9 @@ def client():
     app = flask.Flask(__name__)
     return app.test_client()
 
-@patch('controllers.webhook_controller.MediaFactoryTriggerService')
-@patch('controllers.webhook_controller.VertexAIService')
-@patch('controllers.webhook_controller.JobRepository')
+@patch('src.cloud_function.controllers.webhook_controller.MediaFactoryTriggerService')
+@patch('src.cloud_function.controllers.webhook_controller.VertexAIService')
+@patch('src.cloud_function.controllers.webhook_controller.JobRepository')
 def test_webhook_integration_success(mock_job_repo_class, mock_vertex_service_class, mock_trigger_service_class, client):
     # Mock Vertex Service
     mock_vertex_instance = mock_vertex_service_class.return_value

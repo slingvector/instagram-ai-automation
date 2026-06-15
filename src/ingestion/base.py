@@ -7,14 +7,19 @@ processing pipeline (download → Media Factory → GCS → Firestore → Appium
 """
 from __future__ import annotations
 
+import math
+import yaml
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
 from typing import List, Optional
+from urllib.parse import urlparse, urlunparse
 
 
 # ── Account profiles ──────────────────────────────────────────────────────────
 
-class AccountProfile:
+class AccountProfile(str, Enum):
     """Logical posting account identifiers."""
     MAIN      = "main"         # General niches: fashion, travel, entertainment, sport, fun
     EXCLUSIVE = "exclusive"    # Explicit-content — private, fully isolated account
@@ -22,18 +27,23 @@ class AccountProfile:
 
 # ── Niche taxonomy ────────────────────────────────────────────────────────────
 
-class Niche:
+class Niche(str, Enum):
     FASHION       = "fashion"
     TRAVEL        = "travel"
     ENTERTAINMENT = "entertainment"
     SPORT         = "sport"
     FUN           = "fun"
+    NEWS          = "news"
+    TECH          = "tech"
+    FINANCE       = "finance"
+    NATURE        = "nature"
+    ADRENALINE    = "adrenaline"
     EXPLICIT      = "explicit"   # → always routed to AccountProfile.EXCLUSIVE
 
 
 # ── Platform identifiers ──────────────────────────────────────────────────────
 
-class Platform:
+class Platform(str, Enum):
     INSTAGRAM = "instagram"
     TIKTOK    = "tiktok"
     YOUTUBE   = "youtube"
@@ -47,11 +57,33 @@ class Platform:
 
 # ── Source types ──────────────────────────────────────────────────────────────
 
-class SourceType:
+class SourceType(str, Enum):
     DM             = "dm"             # UC1: Instagram DMs
     CREATOR        = "creator"        # UC2: Creator watchlist
     TRENDING       = "trending"       # UC3: Real-time trend monitor
     CROSS_PLATFORM = "cross_platform" # UC4: TikTok, YT Shorts, etc.
+
+
+# ── Cached config loading ────────────────────────────────────────────────────
+
+_CONFIG_CACHE: dict | None = None
+_CONFIG_PATH = Path("config/uvi_config.yaml")
+
+
+def _load_uvi_config() -> dict:
+    """Load UVI config from disk, cached after first call."""
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is not None:
+        return _CONFIG_CACHE
+    if _CONFIG_PATH.exists():
+        try:
+            with open(_CONFIG_PATH, "r") as f:
+                _CONFIG_CACHE = yaml.safe_load(f) or {}
+        except Exception:
+            _CONFIG_CACHE = {}
+    else:
+        _CONFIG_CACHE = {}
+    return _CONFIG_CACHE
 
 
 # ── Core data model ───────────────────────────────────────────────────────────
@@ -76,8 +108,10 @@ class ContentItem:
     engagement_score: float = 0.0
     view_count:       int   = 0
     like_count:       int   = 0
+    comment_count:    int   = 0
     save_count:       int   = 0
     share_count:      int   = 0
+    upload_timestamp: Optional[int] = None
 
     # Audio
     audio_url:    Optional[str] = None   # Original audio URL (for mood matching)
@@ -89,6 +123,9 @@ class ContentItem:
     title:            Optional[str] = None
     duration_seconds: Optional[int] = None
     shortcode:        Optional[str] = None  # IG reel shortcode for dedup
+
+    # Immersive Intelligence (Phase 1: Meta-tags)
+    immersive_metadata: dict = field(default_factory=dict) # {type, motion, perspective, score}
 
     # Extra provider-specific data
     raw_metadata: dict = field(default_factory=dict)
@@ -104,20 +141,23 @@ class ContentItem:
         if self.shortcode:
             return f"{self.platform}::{self.shortcode}"
         # Strip tracking params from URL
-        from urllib.parse import urlparse, urlunparse
         p = urlparse(self.url)
         return urlunparse((p.scheme, p.netloc, p.path, '', '', ''))
 
     def compute_engagement_score(self) -> float:
         """
         Weighted engagement score for content ranking/filtering.
-        Saves and shares weighted higher — they signal intent, not just consumption.
+        Loads weights from cached yaml config.
         """
+        cfg = _load_uvi_config()
+        weights = {"view": 0.1, "like": 1.0, "save": 5.0, "share": 3.0}  # Fallbacks
+        weights.update(cfg.get("engagement_weights", {}))
+
         score = (
-            self.view_count  * 0.1  +
-            self.like_count  * 1.0  +
-            self.save_count  * 5.0  +
-            self.share_count * 3.0
+            self.view_count  * weights["view"]  +
+            self.like_count  * weights["like"]  +
+            self.save_count  * weights["save"]  +
+            self.share_count * weights["share"]
         )
         self.engagement_score = score
         return score
@@ -141,6 +181,35 @@ class SourceAdapter(ABC):
         """
         ...
 
+    def get_platform_config(self, platform: str) -> dict:
+        """
+        Load platform-specific filters and enablement from uvi_config.yaml (cached).
+        """
+        cfg = _load_uvi_config()
+
+        # Default fallbacks
+        p_cfg = {
+            "enabled": True,
+            "min_views": 100000,
+            "multiplier": 1.0,
+            "baseline": 0.0
+        }
+        p_cfg.update(cfg.get("platforms", {}).get(platform, {}))
+        return p_cfg
+
+    def calculate_uvi(self, platform: str, raw_metric: float) -> float:
+        """
+        Universal Virality Index (UVI) Calculation.
+        Formula: log10(RawMetric * Multiplier) - Baseline
+        """
+        p_cfg = self.get_platform_config(platform)
+        
+        if raw_metric <= 0:
+            return 0.0
+            
+        score = math.log10(raw_metric * p_cfg["multiplier"]) - p_cfg["baseline"]
+        return max(0.0, score)
+
     def run(self) -> List[ContentItem]:
         """
         Called by the scheduler. Fetches, deduplicates, and returns items
@@ -153,3 +222,4 @@ class SourceAdapter(ABC):
         for item in new_items:
             dedup.register(item)
         return new_items
+

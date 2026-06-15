@@ -25,10 +25,21 @@ DB_PATH = Path(__file__).parents[2] / "data" / "dedup.db"
 PHASH_THRESHOLD = 8   # Hamming distance — images within this distance are considered duplicates
 
 
-def _canonical_url(url: str) -> str:
+def canonical_url(url: str) -> str:
     """Strip tracking params and fragments for stable dedup key."""
+    if not url:
+        return ""
     p = urlparse(url)
-    return urlunparse((p.scheme, p.netloc, p.path, '', '', ''))
+    from urllib.parse import parse_qsl, urlencode
+    
+    # Essential query params to keep
+    KEEP_PARAMS = {'v', 'id', 'shortcode'}
+    
+    query_params = parse_qsl(p.query)
+    clean_query = urlencode([(k, v) for k, v in query_params if k.lower() in KEEP_PARAMS])
+    
+    # Canonical components: scheme, netloc, path, params (always empty in modern URLs), query, fragment (empty)
+    return urlunparse((p.scheme, p.netloc, p.path, '', clean_query, ''))
 
 
 def _sha256(s: str) -> str:
@@ -48,16 +59,19 @@ class ContentDedup:
     def __init__(self, db_path: Path = DB_PATH):
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_db()
 
-    def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        return conn
+    def __del__(self):
+        try:
+            self._conn.close()
+        except Exception:
+            pass
 
     def _init_db(self):
-        with self._conn() as conn:
-            conn.executescript("""
+        with self._conn:
+            self._conn.executescript("""
                 CREATE TABLE IF NOT EXISTS seen_urls (
                     url_hash    TEXT PRIMARY KEY,
                     url         TEXT,
@@ -86,20 +100,19 @@ class ContentDedup:
     def is_duplicate(self, item) -> bool:  # item: ContentItem
         """Check if this ContentItem has been seen before (URL or shortcode)."""
         key = _sha256(item.dedup_key)
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM seen_urls WHERE url_hash = ?", (key,)
-            ).fetchone()
-            if row:
-                logger.debug(f"Dedup URL hit: {item.dedup_key}")
-                return True
+        row = self._conn.execute(
+            "SELECT 1 FROM seen_urls WHERE url_hash = ?", (key,)
+        ).fetchone()
+        if row:
+            logger.debug(f"Dedup URL hit: {item.dedup_key}")
+            return True
         return False
 
     def register(self, item) -> None:  # item: ContentItem
         """Mark a ContentItem as processed."""
         key = _sha256(item.dedup_key)
-        with self._conn() as conn:
-            conn.execute(
+        with self._conn:
+            self._conn.execute(
                 """INSERT OR IGNORE INTO seen_urls
                    (url_hash, url, platform, source_type, niche)
                    VALUES (?, ?, ?, ?, ?)""",
@@ -111,16 +124,15 @@ class ContentDedup:
 
     def is_dm_seen(self, message_id: str) -> bool:
         """UC1: Check if this DM message ID has already been processed."""
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM seen_dm_ids WHERE message_id = ?", (message_id,)
-            ).fetchone()
+        row = self._conn.execute(
+            "SELECT 1 FROM seen_dm_ids WHERE message_id = ?", (message_id,)
+        ).fetchone()
         return row is not None
 
     def register_dm(self, message_id: str, thread_id: str, url: str) -> None:
         """UC1: Mark a DM message as processed."""
-        with self._conn() as conn:
-            conn.execute(
+        with self._conn:
+            self._conn.execute(
                 """INSERT OR IGNORE INTO seen_dm_ids (message_id, thread_id, url)
                    VALUES (?, ?, ?)""",
                 (message_id, thread_id, url)
@@ -159,7 +171,6 @@ class ContentDedup:
         Pure-Pillow DCT-based perceptual hash.
         Returns a 64-bit hex string.
         """
-        import struct
         from PIL import Image
         import math
 

@@ -6,7 +6,7 @@ from unittest.mock import patch
 # Set required environment variables before import
 os.environ["GCP_PROJECT_ID"] = "test-project"
 
-from main import app
+from src.media_factory.main import app
 
 @pytest.fixture
 def client():
@@ -14,8 +14,8 @@ def client():
     with app.test_client() as client:
         yield client
 
-@patch('controllers.factory_controller.ProcessedJobRepository')
-@patch('controllers.factory_controller.VideoProcessorService')
+@patch('src.media_factory.controllers.factory_controller.ProcessedJobRepository')
+@patch('src.media_factory.controllers.factory_controller.VideoProcessorService')
 def test_factory_webhook_success(mock_video_service_class, mock_repo_class, client):
     # Setup Mocks
     mock_repo = mock_repo_class.return_value
@@ -41,7 +41,7 @@ def test_factory_webhook_success(mock_video_service_class, mock_repo_class, clie
     mock_video_service.apply_burn_in.assert_called_once_with("gs://test/video.mp4", "Viral Hook!", "job123")
     mock_repo.mark_job_completed.assert_called_once_with("job123", "gs://test/processed.mp4")
 
-@patch('controllers.factory_controller.ProcessedJobRepository')
+@patch('src.media_factory.controllers.factory_controller.ProcessedJobRepository')
 def test_factory_job_not_found(mock_repo_class, client):
     mock_repo = mock_repo_class.return_value
     mock_repo.get_job.return_value = None

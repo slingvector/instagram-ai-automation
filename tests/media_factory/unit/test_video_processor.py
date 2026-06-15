@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from services.video_processor_service import VideoProcessorService
+from src.media_factory.services.video_processor_service import VideoProcessorService
 
 @patch('services.video_processor_service.storage.Client')
 @patch('services.video_processor_service.ffmpeg')

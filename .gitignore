@@ -17,12 +17,15 @@ ENV/
 
 # ── Environment & secrets ──────────────────────────────────────────────────────
 .env
+.flaskenv
 *.json.key
 *-key.json
 modernos-edge-agent-key.json
 service_account*.json
 credentials*.json
 gcp_*.json
+client_secrets.json
+token.json
 
 # ── Test artifacts & caches ────────────────────────────────────────────────────
 .pytest_cache/
@@ -36,6 +39,13 @@ coverage.xml
 recordings/
 debug/
 data/
+tmp/
+*.db
+
+# ── Binary assets (use download scripts) ──────────────────────────────────────
+docs/*.pdf
+fonts/*.ttf
+fonts/*.ttc
 
 # ── Temp & editor ──────────────────────────────────────────────────────────────
 *.mp4
@@ -51,4 +61,19 @@ others_temp/
 
 # ── Logs ───────────────────────────────────────────────────────────────────────
 *.log
+*.log.bak
 logs/
+
+# ── Run-Specific Data ───────────────────────────────────────────────────────────
+batch_creators_*.txt
+seed_creators.txt
+creators.txt
+results.json
+
+# ── Archives ───────────────────────────────────────────────────────────────────
+config_archive_*/
+
+# ── Scratch & Docs ─────────────────────────────────────────────────────────────
+scratch/
+docs/files/
+docs/files.zip

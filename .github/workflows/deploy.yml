@@ -1,0 +1,29 @@
+name: Deploy to Pipeline VM
+
+on:
+  push:
+    branches:
+      - feature/google-drive-only
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to VM via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USERNAME }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            cd /home/cortex/app
+            
+            # Fetch the latest code from GitHub
+            git fetch origin
+            git checkout feature/google-drive-only
+            git pull origin feature/google-drive-only
+            
+            # Restart the backend to apply new code
+            sudo docker-compose rm -fs backend
+            sudo docker-compose up -d --build backend

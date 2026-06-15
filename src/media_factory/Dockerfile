@@ -1,15 +1,13 @@
 FROM python:3.11-slim
 
-# Install FFmpeg and required system dependencies
+# Install FFmpeg, Fontconfig, and required system dependencies
 RUN apt-get update && \
-    apt-get install -y ffmpeg && \
+    apt-get install -y ffmpeg fontconfig fonts-noto-color-emoji wget && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Add a stylish font for the burn-in text
-# We use Impact as a widely supported, meme-friendly fallback, 
-# but downloading a specific TTF is recommended for production.
-RUN apt-get update && apt-get install -y fonts-liberation
+# Rebuild the system font cache so libass knows the font exists
+RUN fc-cache -f -v
 
 WORKDIR /app
 
