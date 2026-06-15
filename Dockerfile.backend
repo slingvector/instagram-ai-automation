@@ -7,9 +7,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Set work directory
 WORKDIR /app
 
-# Install OS dependencies: ffmpeg for media_factory
+# Install OS dependencies: ffmpeg for media_factory, adb for localsend auto-wake
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get install -y --no-install-recommends ffmpeg adb && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

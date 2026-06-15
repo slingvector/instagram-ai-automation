@@ -13,3 +13,14 @@ export async function getDb() {
   });
   return db;
 }
+
+let dedupDb = null;
+export async function getDedupDb() {
+  if (dedupDb) return dedupDb;
+  const dbPath = path.resolve(process.cwd(), '../data/dedup.db');
+  dedupDb = await open({
+    filename: dbPath,
+    driver: sqlite3.Database
+  });
+  return dedupDb;
+}

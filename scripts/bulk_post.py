@@ -39,7 +39,7 @@ from src.utils.proxy_helper import ProxyHelper
 from src.utils.google_drive_service import GoogleDriveService
 
 TOTAL_REELS = 25
-GAP_SECONDS = 300  # 5 minute gap for 25-reel batch
+GAP_SECONDS = 30  # 30 second gap for 25-reel batch
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "mcr-relay-1772228380")
 BUCKET     = os.getenv("GCS_BUCKET_NAME", "mcr-relay-1772228380-raw-input")
@@ -409,25 +409,33 @@ class BulkPosterStateMachine:
                         logger.info(f"{tag} Downloading processed video from GCS for Relay sync...")
                         self.uploader.download_file(processed_uri, local_processed_path)
                     
-                    # 1. Attempt LocalSend (Primary Relay)
-                    logger.info(f"{tag} 🚀 Bypassing LocalSend Relay to prevent hang...")
-                    relay_success = False
-                    
-                    if relay_success:
-                        logger.info(f"{tag} ✅ Relayed to Phone via LocalSend!")
-                        self.state_manager.update_state(url, ReelState.RELAYED_TO_PHONE)
+                    # 1. Unconditionally Relay to Firebase Storage
+                    logger.info(f"{tag} ☁️ Relaying to Firebase Storage...")
+                    firebase_url = self.firebase_service.relay_video(local_processed_path)
+                    if firebase_url:
+                        logger.info(f"{tag} ✅ Relayed to Firebase: {firebase_url}")
+                        self.state_manager.update_state(url, ReelState.RELAYED_TO_FIREBASE, firebase_url=firebase_url)
                     else:
-                        # 2. Fallback to Firebase Storage (Progressive Streaming)
-                        logger.warning(f"{tag} ⚠️ LocalSend failed. Falling back to Firebase Storage...")
-                        firebase_url = self.firebase_service.relay_video(local_processed_path)
-                        
-                        if firebase_url:
-                            logger.info(f"{tag} ✅ Relayed to Firebase: {firebase_url}")
-                            self.state_manager.update_state(url, ReelState.RELAYED_TO_FIREBASE, firebase_url=firebase_url)
+                        logger.error(f"{tag} ❌ Firebase Relay failed.")
+
+                    # 2. Conditionally Attempt LocalSend based on .env
+                    localsend_enabled = os.getenv("LOCALSEND_ENABLED", "False").lower() in ("true", "1", "yes")
+                    relay_success = False
+                    if localsend_enabled:
+                        logger.info(f"{tag} 🚀 Attempting LocalSend Relay (Enabled in .env)...")
+                        relay_success = self.localsend_service.push([local_processed_path])
+                        if relay_success:
+                            logger.info(f"{tag} ✅ Relayed to Phone via LocalSend!")
+                            self.state_manager.update_state(url, ReelState.RELAYED_TO_PHONE, firebase_url=firebase_url)
                         else:
-                            logger.error(f"{tag} ❌ Both LocalSend and Firebase Relay failed.")
-                            self.state_manager.update_state(url, ReelState.FAILED, error_message="All relay methods failed")
-                            return False, 0
+                            logger.warning(f"{tag} ⚠️ LocalSend failed. (Firebase is primary)")
+                    else:
+                        logger.info(f"{tag} ⏭️ LocalSend skipped (LOCALSEND_ENABLED=False).")
+
+                    if not firebase_url and not relay_success:
+                        logger.error(f"{tag} ❌ Both LocalSend and Firebase Relay failed.")
+                        self.state_manager.update_state(url, ReelState.FAILED, error_message="All relay methods failed")
+                        return False, 0
                     
                     # 3. Trigger Optional HLS Transcoder Job for Adaptive Cloud Delivery (Method 1)
                     if self.hls_service.client and self.hls_service.cdn_host:

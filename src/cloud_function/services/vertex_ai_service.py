@@ -47,7 +47,7 @@ class VertexAIService:
         self.location = location
         import os
         api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-        self.is_developer_api = bool(api_key)
+        self.is_developer_api = False # FORCE Vertex AI usage
         try:
             if self.is_developer_api:
                 # Prefer free Gemini Developer API (AI Studio key)
@@ -258,7 +258,7 @@ class VertexAIService:
             video_part = self._get_video_part(gcs_video_uri)
             
             metadata = self._generate_with_retry(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash',
                 contents=[video_part, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.7, 
@@ -286,7 +286,7 @@ class VertexAIService:
             video_part = self._get_video_part(gcs_video_uri)
             
             response = self.client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash',
                 contents=[video_part, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.0,
@@ -309,7 +309,7 @@ class VertexAIService:
             video_part = self._get_video_part(gcs_video_uri)
             
             return self._generate_with_retry(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash',
                 contents=[video_part, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.0,
@@ -331,7 +331,7 @@ class VertexAIService:
             video_part = self._get_video_part(gcs_video_uri)
             
             result = self.client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash',
                 contents=[video_part, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.0,
@@ -367,7 +367,7 @@ class VertexAIService:
             if not text:
                 return True # Assume relevant if title is missing (better than dropping)
             response = self.client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash',
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.0, # Deterministic

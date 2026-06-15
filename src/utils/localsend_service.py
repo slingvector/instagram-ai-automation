@@ -23,34 +23,37 @@ class AdbHelper:
     @staticmethod
     def wake_and_launch_localsend(ip: str, port: str = "5555", pin: str = None):
         target = f"{ip}:{port}"
-        logger.info(f"ADB Auto-Wake: Connecting to {target}...")
+        logger.info(f"ADB Auto-Wake: Connecting to {target} via host ADB server...")
         
-        # 1. Connect
-        subprocess.run(["adb", "connect", target], capture_output=True, text=True)
+        # Base adb command targeting the host's ADB server
+        adb_base = ["adb", "-H", "host.docker.internal"]
+        
+        # 1. Connect (Safe to call even if adbwatch already connected it)
+        subprocess.run(adb_base + ["connect", target], capture_output=True, text=True)
         
         # 2. Wake Screen
         logger.info("ADB Auto-Wake: Waking screen...")
-        subprocess.run(["adb", "-s", target, "shell", "input", "keyevent", "KEYCODE_WAKEUP"], capture_output=True)
+        subprocess.run(adb_base + ["-s", target, "shell", "input", "keyevent", "KEYCODE_WAKEUP"], capture_output=True)
         time.sleep(0.5)
         
         # 3. Dismiss Keyguard (swipe up to reveal PIN pad)
-        subprocess.run(["adb", "-s", target, "shell", "wm", "dismiss-keyguard"], capture_output=True)
+        subprocess.run(adb_base + ["-s", target, "shell", "wm", "dismiss-keyguard"], capture_output=True)
         time.sleep(0.75)
         
         # 3.5. Type PIN if provided
         if pin:
             logger.info("ADB Auto-Wake: Entering PIN...")
-            subprocess.run(["adb", "-s", target, "shell", "input", "text", pin], capture_output=True)
-            subprocess.run(["adb", "-s", target, "shell", "input", "keyevent", "KEYCODE_ENTER"], capture_output=True)
+            subprocess.run(adb_base + ["-s", target, "shell", "input", "text", pin], capture_output=True)
+            subprocess.run(adb_base + ["-s", target, "shell", "input", "keyevent", "KEYCODE_ENTER"], capture_output=True)
             time.sleep(0.75)
 
         # 4. Launch LocalSend
         logger.info("ADB Auto-Wake: Launching LocalSend app...")
-        subprocess.run(["adb", "-s", target, "shell", "am", "start", "-n", "org.localsend.localsend_app/.MainActivity"], capture_output=True)
+        subprocess.run(adb_base + ["-s", target, "shell", "am", "start", "-n", "org.localsend.localsend_app/.MainActivity"], capture_output=True)
         
         # 5. Wait for it to bind the port
-        logger.info("ADB Auto-Wake: Waiting 1.5 seconds for app to initialize...")
-        time.sleep(1.5)
+        logger.info("ADB Auto-Wake: Waiting 4.0 seconds for app to initialize...")
+        time.sleep(4.0)
 
 class LocalSendService:
     DEFAULT_PORT = 53317

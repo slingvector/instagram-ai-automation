@@ -6,6 +6,7 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const state = searchParams.get('state') || 'CAPTIONED';
     const limit = parseInt(searchParams.get('limit') || '50');
+    const offset = parseInt(searchParams.get('offset') || '0');
     
     const db = await getDb();
     
@@ -16,10 +17,10 @@ export async function GET(request) {
         WHERE state IN ('RELAYED_TO_FIREBASE', 'RELAYED_TO_PHONE', 'SYNCED_TO_DRIVE', 'POSTED')
            OR firebase_url IS NOT NULL 
            OR hls_cdn_url IS NOT NULL 
-        ORDER BY updated_at DESC LIMIT ?
-      `, [limit]);
+        ORDER BY updated_at DESC LIMIT ? OFFSET ?
+      `, [limit, offset]);
     } else {
-      reels = await db.all('SELECT * FROM reel_states WHERE state = ? ORDER BY created_at DESC LIMIT ?', [state, limit]);
+      reels = await db.all('SELECT * FROM reel_states WHERE state = ? ORDER BY created_at DESC LIMIT ? OFFSET ?', [state, limit, offset]);
     }
     
     return NextResponse.json({ reels });

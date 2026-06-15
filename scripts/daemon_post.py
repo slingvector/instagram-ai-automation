@@ -23,6 +23,7 @@ logger = logging.getLogger("daemon")
 CYCLE_INTERVAL_SECONDS = int(os.getenv("DAEMON_INTERVAL_SECONDS", 3600)) # Default: 1 hour
 REELS_PER_CYCLE = str(os.getenv("REELS_PER_CYCLE", "10"))
 GAP_BETWEEN_REELS = str(os.getenv("GAP_BETWEEN_REELS", "180")) # 3 minutes
+DISCOVERY_MANIFEST = os.getenv("DISCOVERY_MANIFEST", "config/hot_content_manifest.yaml")
 
 def run_cycle():
     logger.info("🚀 Starting new bulk_post cycle...")
@@ -31,7 +32,8 @@ def run_cycle():
             sys.executable, "scripts/bulk_post.py", 
             "--count", REELS_PER_CYCLE, 
             "--gap", GAP_BETWEEN_REELS,
-            "--skip-preflight"
+            "--skip-preflight",
+            "--config", DISCOVERY_MANIFEST
         ]
         # We run it synchronously and capture the output to stdout
         result = subprocess.run(cmd)
